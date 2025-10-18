@@ -1,0 +1,49 @@
+#Pocketbase
+pocketbase.exe
+# Node modules and logs
+node_modules/
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Coverage
+coverage/
+*.lcov
+
+# Build output
+build/
+dist/
+
+# Caches and editor settings
+.cache/
+.parcel-cache/
+.vscode/
+.idea/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Environment files (keep example tracked)
+.env
+.env.*
+!.env.example
+
+# Node REPL history
+.node_repl_history
+
+# Temporary files
+*.pid
+*.pid.lock
+*.seed
+
+# PocketBase local data (keep migrations tracked)
+pb_data/
+# pb_migrations/ stays tracked for schema history
+
+# Uploads/temp (if used locally)
+uploads/
+tmp/

@@ -1,0 +1,32 @@
+{
+  "name": "thirra-ai",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node app/src/server.js",
+    "dev": "node app/src/server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Malek4522/Thirra-ai.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/Malek4522/Thirra-ai/issues"
+  },
+  "homepage": "https://github.com/Malek4522/Thirra-ai#readme",
+  "dependencies": {
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "helmet": "^8.1.0",
+    "morgan": "^1.10.1",
+    "multer": "^2.0.2",
+    "pocketbase": "^0.26.2"
+  }
+}
