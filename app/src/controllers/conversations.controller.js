@@ -1,17 +1,4 @@
-export async function listConversations(req, res, next) {
-  try {
-    const page = parseInt(req.query.page || '1', 10);
-    const perPage = parseInt(req.query.perPage || '20', 10);
-    const result = await req.pb.collection('conversations').getList(page, perPage, {
-      sort: '-updated',
-    });
-    res.json(result);
-  } catch (err) {
-    next(err);
-  }
-}
-
-export async function listConversationTitles(req, res, next) {
+export async function listConverstations(req, res, next) {
   try {
     const limit = parseInt(req.query.limit || '200', 10);
     const items = await req.pb.collection('conversations').getFullList(limit, {
@@ -24,33 +11,9 @@ export async function listConversationTitles(req, res, next) {
   }
 }
 
-export async function createConversation(req, res, next) {
-  try {
-    const { title } = req.body || {};
-    if (!title) {
-      return res.status(400).json({ error: 'title required' });
-    }
-    const record = await req.pb.collection('conversations').create({
-      title,
-      owner: req.user.id,
-    });
-    res.status(201).json(record);
-  } catch (err) {
-    next(err);
-  }
-}
 
-export async function getConversation(req, res, next) {
-  try {
-    const { id } = req.params;
-    const record = await req.pb.collection('conversations').getOne(id);
-    res.json(record);
-  } catch (err) {
-    next(err);
-  }
-}
 
-export async function getConversationFull(req, res, next) {
+export async function Conversationdetails(req, res, next) {
   try {
     const { id } = req.params;
     const conversation = await req.pb.collection('conversations').getOne(id);
@@ -80,20 +43,6 @@ export async function getConversationFull(req, res, next) {
       },
       turns: normalizedTurns,
     });
-  } catch (err) {
-    next(err);
-  }
-}
-
-export async function updateConversation(req, res, next) {
-  try {
-    const { id } = req.params;
-    const { title } = req.body || {};
-    if (!title) {
-      return res.status(400).json({ error: 'title required' });
-    }
-    const record = await req.pb.collection('conversations').update(id, { title });
-    res.json(record);
   } catch (err) {
     next(err);
   }

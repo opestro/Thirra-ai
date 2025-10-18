@@ -9,6 +9,8 @@ export async function startChat(req, res, next) {
 
     const userFiles = (req.files?.user_attachments || []).map((f) => new Blob([f.buffer], { type: f.mimetype }));
     const assistantText = `Simulated response #1: I read your prompt.`;
+    // Simulate assistant attachment on even turn indexes only (1 => none)
+    const assistantFiles = [];
 
     const turn = await req.pb.collection('turns').create({
       conversation: conversation.id,
@@ -16,6 +18,7 @@ export async function startChat(req, res, next) {
       user_text: prompt,
       assistant_text: assistantText,
       user_attachments: userFiles,
+      assistant_attachments: assistantFiles,
     });
 
     res.status(201).json({
@@ -31,6 +34,7 @@ export async function startChat(req, res, next) {
         user_text: turn.user_text,
         assistant_text: turn.assistant_text,
         user_attachments: turn.user_attachments || [],
+        assistant_attachments: turn.assistant_attachments || [],
         created: turn.created,
         updated: turn.updated,
       },
@@ -60,6 +64,10 @@ export async function appendChat(req, res, next) {
     const assistantText = `Simulated response #${nextIndex}: I read your prompt.`;
 
     const userFiles = (req.files?.user_attachments || []).map((f) => new Blob([f.buffer], { type: f.mimetype }));
+    // Simulate assistant attachment on even indexes
+    const assistantFiles = nextIndex % 2 === 0
+      ? [new Blob([Buffer.from(`Simulated attachment for turn #${nextIndex}`)], { type: 'text/plain' })]
+      : [];
 
     const turn = await req.pb.collection('turns').create({
       conversation: conversationId,
@@ -67,6 +75,7 @@ export async function appendChat(req, res, next) {
       user_text: prompt,
       assistant_text: assistantText,
       user_attachments: userFiles,
+      assistant_attachments: assistantFiles,
     });
 
     res.status(201).json({
@@ -82,6 +91,7 @@ export async function appendChat(req, res, next) {
         user_text: turn.user_text,
         assistant_text: turn.assistant_text,
         user_attachments: turn.user_attachments || [],
+        assistant_attachments: turn.assistant_attachments || [],
         created: turn.created,
         updated: turn.updated,
       },

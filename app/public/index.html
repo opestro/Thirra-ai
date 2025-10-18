@@ -35,6 +35,17 @@
       .card button { width: 100%; background: var(--accent); color: white; border: 0; padding: 10px 14px; border-radius: 8px; cursor: pointer; }
       .error { color: var(--danger); font-size: 0.9em; }
     </style>
+    <style>
+      /* Profile modal */
+      .modal { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: none; align-items: center; justify-content: center; }
+      .modal.show { display: flex; }
+      .modal-card { width: 480px; background: var(--panel); padding: 16px; border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,.3); }
+      .modal-card h3 { margin: 0 0 12px; }
+      .modal-card .row { margin-bottom: 10px; }
+      .modal-card input, .modal-card textarea { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #2a3252; background: #0e1324; color: var(--text); }
+      .modal-card textarea { min-height: 100px; }
+      .modal-actions { display:flex; gap:8px; justify-content:flex-end; margin-top: 12px; }
+    </style>
   </head>
   <body>
     <div id="auth" class="auth hidden">
@@ -63,17 +74,41 @@
         <div class="topbar">
           <div id="convTitle">No conversation selected</div>
           <div class="user-actions">
+            <button id="profileBtn" type="button">Profile</button>
             <button id="logoutBtn" type="button">Logout</button>
           </div>
         </div>
         <div id="messages" class="messages"></div>
         <div class="composer">
           <input id="promptInput" placeholder="Type your prompt..." />
+          <input id="attachInput" type="file" class="hidden" multiple />
+          <button id="attachBtn" type="button" style="background:#55699d;">Attach</button>
           <button id="sendBtn" type="button">Send</button>
         </div>
+        <div id="attachPreview" style="padding:0 12px 12px; color:var(--muted); font-size:0.9em;"></div>
       </main>
     </div>
+<div id="profileModal" class="modal">
+  <div class="modal-card">
+    <h3>Profile</h3>
+    <div class="row"><label>Name</label><input id="profName" type="text" /></div>
+    <div class="row"><label>Email</label><input id="profEmail" type="email" disabled /><div style="color:var(--muted); font-size:0.9em; margin-top:6px;">Email cannot be changed here.</div></div>
+    <div class="row"><label>Instruction</label><textarea id="profInstruction"></textarea></div>
 
+    <hr style="border-color:#2a3252; margin:12px 0;" />
+    <h4 style="margin:0 0 8px;">Change Password</h4>
+    <div class="row"><label>Current Password</label><input id="profOldPassword" type="password" /></div>
+    <div class="row"><label>New Password</label><input id="profNewPassword" type="password" /></div>
+    <div class="row"><label>Confirm New Password</label><input id="profConfirmPassword" type="password" /></div>
+
+    <p class="error" id="profError"></p>
+    <div class="modal-actions">
+      <button id="profCancel" type="button" style="background:transparent; border:1px solid #2a3252; color:var(--text)">Cancel</button>
+      <button id="profChangePassword" type="button" style="background:#55699d;">Change Password</button>
+      <button id="profSave" type="button">Save</button>
+    </div>
+  </div>
+</div>
     <script>
       const state = {
         me: null,
@@ -92,6 +127,11 @@
         const contentType = res.headers.get('content-type') || '';
         return contentType.includes('application/json') ? res.json() : res.text();
       }
+      async function apiForm(path, formData) {
+        const res = await fetch(path, { method:'POST', credentials:'include', body: formData });
+        if (!res.ok) throw new Error((await res.text()) || ('HTTP ' + res.status));
+        return res.json();
+      }
       function show(elId) {
         document.getElementById('auth').classList.add('hidden');
         document.getElementById('app').classList.add('hidden');
@@ -101,7 +141,8 @@
 
       async function bootstrap() {
         try {
-          state.me = await api('/api/auth/me');
+          const me = await api('/api/auth/me');
+          state.me = me.user; // store user model directly
           show('app');
           await refreshConversations();
         } catch (e) {
@@ -110,7 +151,7 @@
       }
 
       async function refreshConversations() {
-        const data = await api('/api/conversations/titles');
+        const data = await api('/api/conversations');
         state.conversations = data.items || [];
         renderConversations();
       }
@@ -130,7 +171,7 @@
       async function selectConversation(id) {
         state.selectedConversationId = id;
         renderConversations();
-        const full = await api(`/api/conversations/${id}/full`);
+        const full = await api(`/api/conversations/${id}`);
         setConvTitle(full.conversation.title);
         renderMessages(full.turns);
       }
@@ -147,26 +188,65 @@
             const u = document.createElement('div');
             u.className = 'msg user';
             u.textContent = t.user_text;
+            // Render user attachments as links
+            renderAttachments(u, 'user', t);
             box.appendChild(u);
           }
           if (t.assistant_text) {
             const a = document.createElement('div');
             a.className = 'msg assistant';
             a.textContent = t.assistant_text;
+            // Render assistant attachments as links
+            renderAttachments(a, 'assistant', t);
             box.appendChild(a);
           }
         });
         box.scrollTop = box.scrollHeight;
       }
+      function attachmentUrlForTurn(turnId, filename) {
+        const base = 'http://127.0.0.1:8090';
+        return `${base}/api/files/turns/${turnId}/${encodeURIComponent(filename)}`;
+      }
+      function renderAttachments(container, who, turn) {
+        const files = who === 'user' ? (turn.user_attachments || []) : (turn.assistant_attachments || []);
+        if (!files || !files.length) return;
+        const wrap = document.createElement('div');
+        wrap.style.marginTop = '8px';
+        files.forEach((f) => {
+          const filename = typeof f === 'string' ? f : String(f);
+          const link = document.createElement('a');
+          link.href = attachmentUrlForTurn(turn.id, filename);
+          link.target = '_blank';
+          link.rel = 'noopener';
+          link.textContent = filename;
+          const item = document.createElement('div');
+          item.appendChild(link);
+          wrap.appendChild(item);
+        });
+        container.appendChild(wrap);
+      }
 
       async function sendPrompt() {
         const input = document.getElementById('promptInput');
+        const attachInput = document.getElementById('attachInput');
+        const preview = document.getElementById('attachPreview');
         const prompt = input.value.trim();
+        const hasFiles = attachInput.files && attachInput.files.length > 0;
         if (!prompt) return;
         input.value = '';
+        preview.textContent = '';
         try {
           if (state.selectedConversationId) {
-            const res = await api('/api/chat', { method:'POST', body: JSON.stringify({ conversationId: state.selectedConversationId, prompt }) });
+            let res;
+            if (hasFiles) {
+              const fd = new FormData();
+              fd.append('conversationId', state.selectedConversationId);
+              fd.append('prompt', prompt);
+              Array.from(attachInput.files).forEach(file => fd.append('user_attachments', file));
+              res = await apiForm('/api/chat', fd);
+            } else {
+              res = await api('/api/chat', { method:'POST', body: JSON.stringify({ conversationId: state.selectedConversationId, prompt }) });
+            }
             // Move conversation to top in sidebar with updated timestamp
             const updatedItem = { id: res.conversation.id, title: res.conversation.title, updated: res.conversation.updated };
             state.conversations = [updatedItem, ...state.conversations.filter(c => c.id !== updatedItem.id)];
@@ -177,17 +257,29 @@
               const u = document.createElement('div');
               u.className = 'msg user';
               u.textContent = res.turn.user_text;
+              renderAttachments(u, 'user', res.turn);
               box.appendChild(u);
             }
             if (res.turn.assistant_text) {
               const a = document.createElement('div');
               a.className = 'msg assistant';
               a.textContent = res.turn.assistant_text;
+              renderAttachments(a, 'assistant', res.turn);
               box.appendChild(a);
             }
+            // Clear file selection after send
+            attachInput.value = '';
             box.scrollTop = box.scrollHeight;
           } else {
-            const res = await api('/api/chat', { method:'POST', body: JSON.stringify({ prompt }) });
+            let res;
+            if (hasFiles) {
+              const fd = new FormData();
+              fd.append('prompt', prompt);
+              Array.from(attachInput.files).forEach(file => fd.append('user_attachments', file));
+              res = await apiForm('/api/chat', fd);
+            } else {
+              res = await api('/api/chat', { method:'POST', body: JSON.stringify({ prompt }) });
+            }
             state.selectedConversationId = res.conversation.id;
             // Update sidebar locally without extra requests
             const newItem = { id: res.conversation.id, title: res.conversation.title, updated: res.conversation.updated };
@@ -195,7 +287,9 @@
             renderConversations();
             // Set title and render first turn directly from response
             setConvTitle(res.conversation.title);
-            renderMessages([{ id: res.turn.id, index: res.turn.index, user_text: res.turn.user_text, assistant_text: res.turn.assistant_text, user_attachments: res.turn.user_attachments || [], assistant_attachments: [], created: res.turn.created, updated: res.turn.updated }]);
+            renderMessages([{ id: res.turn.id, index: res.turn.index, user_text: res.turn.user_text, assistant_text: res.turn.assistant_text, user_attachments: res.turn.user_attachments || [], assistant_attachments: res.turn.assistant_attachments || [], created: res.turn.created, updated: res.turn.updated }]);
+            // Clear file selection after send
+            attachInput.value = '';
           }
         } catch (e) {
           alert('Error: ' + e.message);
@@ -238,6 +332,62 @@
         document.getElementById('promptInput').focus();
       }
 
+      function openProfile() {
+        // prefill from state.me
+        document.getElementById('profName').value = state.me?.name || '';
+        document.getElementById('profEmail').value = state.me?.email || '';
+        document.getElementById('profInstruction').value = state.me?.instruction || '';
+        document.getElementById('profError').textContent = '';
+        document.getElementById('profileModal').classList.add('show');
+      }
+      function closeProfile() {
+        document.getElementById('profileModal').classList.remove('show');
+      }
+      async function saveProfile() {
+        const name = document.getElementById('profName').value.trim();
+        const instruction = document.getElementById('profInstruction').value.trim();
+        const err = document.getElementById('profError');
+        err.textContent = '';
+        try {
+          const payload = {};
+          if (name !== state.me?.name) payload.name = name;
+          if (instruction !== state.me?.instruction) payload.instruction = instruction;
+          if (!Object.keys(payload).length) { closeProfile(); return; }
+          const updated = await api('/api/users/me', { method:'PATCH', body: JSON.stringify(payload) });
+          state.me = { id: updated.id, email: updated.email, name: updated.name, instruction: updated.instruction };
+          closeProfile();
+        } catch (e) {
+          err.textContent = e.message;
+        }
+      }
+      async function changePassword() {
+        const oldPassword = document.getElementById('profOldPassword').value;
+        const newPassword = document.getElementById('profNewPassword').value;
+        const passwordConfirm = document.getElementById('profConfirmPassword').value;
+        const err = document.getElementById('profError');
+        err.textContent = '';
+        if (!oldPassword || !newPassword || !passwordConfirm) {
+          err.textContent = 'Please fill current password, new password, and confirmation.';
+          return;
+        }
+        if (newPassword !== passwordConfirm) {
+          err.textContent = 'Passwords do not match.';
+          return;
+        }
+        if (newPassword.length < 8) {
+          err.textContent = 'Password must be at least 8 characters.';
+          return;
+        }
+        try {
+          await api('/api/users/me/password', { method:'PATCH', body: JSON.stringify({ oldPassword, newPassword }) });
+          document.getElementById('profOldPassword').value = '';
+          document.getElementById('profNewPassword').value = '';
+          document.getElementById('profConfirmPassword').value = '';
+          alert('Password changed successfully.');
+        } catch (e) {
+          err.textContent = e.message;
+        }
+      }
       function init() {
         document.getElementById('sendBtn').onclick = sendPrompt;
         document.getElementById('promptInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendPrompt(); });
@@ -245,6 +395,18 @@
         document.getElementById('registerBtn').onclick = doRegister;
         document.getElementById('logoutBtn').onclick = doLogout;
         document.getElementById('newChatBtn').onclick = newChat;
+        const attachInput = document.getElementById('attachInput');
+        const attachBtn = document.getElementById('attachBtn');
+        const preview = document.getElementById('attachPreview');
+        attachBtn.onclick = () => attachInput.click();
+        attachInput.onchange = () => {
+          const names = Array.from(attachInput.files || []).map(f => f.name);
+          preview.textContent = names.length ? `Attached: ${names.join(', ')}` : '';
+        };
+        document.getElementById('profileBtn').onclick = openProfile;
+        document.getElementById('profCancel').onclick = closeProfile;
+        document.getElementById('profSave').onclick = saveProfile;
+        document.getElementById('profChangePassword').onclick = changePassword;
         bootstrap();
       }
 
