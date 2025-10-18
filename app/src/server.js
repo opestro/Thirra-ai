@@ -5,12 +5,25 @@ import helmet from 'helmet';
 import { config as dotenvConfig } from 'dotenv';
 import router from './routes/index.js';
 import errorHandler from './middleware/error.js';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 dotenvConfig();
 
 const app = express();
 
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: {
+    useDefaults: true,
+    directives: {
+      "default-src": ["'self'"],
+      "script-src": ["'self'", "'unsafe-inline'"],
+      "style-src": ["'self'", "'unsafe-inline'"],
+      "img-src": ["'self'", "data:"],
+      "connect-src": ["'self'"],
+    },
+  },
+}));
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
@@ -21,6 +34,12 @@ app.get('/health', (req, res) => {
 });
 
 app.use('/api', router);
+
+// Static frontend
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const publicDir = path.join(__dirname, '..', 'public');
+app.use(express.static(publicDir));
 
 app.use(errorHandler);
 

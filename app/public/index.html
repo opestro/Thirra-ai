@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Thirra AI - Minimal Chat</title>
+    <style>
+      :root { --bg:#0f1220; --panel:#181c2f; --text:#e6e6e6; --muted:#9aa0b7; --accent:#4f7cff; --danger:#ff6b6b; }
+      * { box-sizing: border-box; }
+      body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: var(--bg); color: var(--text); }
+      a { color: var(--accent); }
+      .container { display: flex; height: 100vh; }
+      .sidebar { width: 280px; background: var(--panel); border-right: 1px solid #2a3252; display: flex; flex-direction: column; }
+      .sidebar-header { padding: 12px; border-bottom: 1px solid #2a3252; display: flex; gap: 8px; align-items: center; }
+      .sidebar-header button { background: var(--accent); color: white; border: 0; padding: 8px 12px; border-radius: 6px; cursor: pointer; }
+      .sidebar-list { flex: 1; overflow: auto; }
+      .conv-item { padding: 10px 12px; cursor: pointer; border-bottom: 1px solid #2a3252; }
+      .conv-item.active { background: #243056; }
+      .content { flex: 1; display: flex; flex-direction: column; }
+      .topbar { padding: 12px; border-bottom: 1px solid #2a3252; display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+      .topbar .user-actions button { background: transparent; border: 1px solid #2a3252; color: var(--text); padding: 6px 10px; border-radius: 6px; cursor: pointer; }
+      .messages { flex: 1; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+      .msg { padding: 12px; border-radius: 10px; max-width: 80%; }
+      .msg.user { background: #20304f; align-self: flex-end; }
+      .msg.assistant { background: #1b2742; align-self: flex-start; }
+      .composer { padding: 12px; border-top: 1px solid #2a3252; display: flex; gap: 8px; }
+      .composer input { flex: 1; padding: 10px 12px; border-radius: 8px; border: 1px solid #2a3252; background: #0e1324; color: var(--text); }
+      .composer button { background: var(--accent); color: white; border: 0; padding: 10px 14px; border-radius: 8px; cursor: pointer; }
+      .hidden { display: none; }
+      /* Auth */
+      .auth { display: grid; place-items: center; height: 100vh; padding: 24px; }
+      .card { width: 360px; background: var(--panel); padding: 20px; border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,.2);} 
+      .card h2 { margin-top: 0; }
+      .card input { width: 100%; padding: 10px 12px; margin: 8px 0; border-radius: 8px; border: 1px solid #2a3252; background: #0e1324; color: var(--text); }
+      .card button { width: 100%; background: var(--accent); color: white; border: 0; padding: 10px 14px; border-radius: 8px; cursor: pointer; }
+      .error { color: var(--danger); font-size: 0.9em; }
+    </style>
+  </head>
+  <body>
+    <div id="auth" class="auth hidden">
+      <div class="card">
+        <h2>Welcome</h2>
+        <p class="error" id="authError"></p>
+        <input id="email" type="email" placeholder="Email" />
+        <input id="password" type="password" placeholder="Password" />
+        <input id="name" type="text" placeholder="Name (register only)" />
+        <div style="display:flex; gap:8px; margin-top:8px;">
+          <button id="loginBtn" type="button">Login</button>
+          <button id="registerBtn" type="button" style="background:#2fbf71;">Register</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="app" class="container hidden">
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <button id="newChatBtn" type="button">New Chat</button>
+          <span style="color:var(--muted);">Conversations</span>
+        </div>
+        <div id="conversations" class="sidebar-list"></div>
+      </aside>
+      <main class="content">
+        <div class="topbar">
+          <div id="convTitle">No conversation selected</div>
+          <div class="user-actions">
+            <button id="logoutBtn" type="button">Logout</button>
+          </div>
+        </div>
+        <div id="messages" class="messages"></div>
+        <div class="composer">
+          <input id="promptInput" placeholder="Type your prompt..." />
+          <button id="sendBtn" type="button">Send</button>
+        </div>
+      </main>
+    </div>
+
+    <script>
+      const state = {
+        me: null,
+        conversations: [],
+        selectedConversationId: null,
+      };
+
+      // Helpers
+      async function api(path, options = {}) {
+        const res = await fetch(path, {
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', ...(options.headers||{}) },
+          ...options,
+        });
+        if (!res.ok) throw new Error((await res.text()) || ('HTTP ' + res.status));
+        const contentType = res.headers.get('content-type') || '';
+        return contentType.includes('application/json') ? res.json() : res.text();
+      }
+      function show(elId) {
+        document.getElementById('auth').classList.add('hidden');
+        document.getElementById('app').classList.add('hidden');
+        document.getElementById(elId).classList.remove('hidden');
+      }
+      function setConvTitle(text) { document.getElementById('convTitle').textContent = text; }
+
+      async function bootstrap() {
+        try {
+          state.me = await api('/api/auth/me');
+          show('app');
+          await refreshConversations();
+        } catch (e) {
+          show('auth');
+        }
+      }
+
+      async function refreshConversations() {
+        const data = await api('/api/conversations/titles');
+        state.conversations = data.items || [];
+        renderConversations();
+      }
+
+      function renderConversations() {
+        const list = document.getElementById('conversations');
+        list.innerHTML = '';
+        state.conversations.forEach((c) => {
+          const div = document.createElement('div');
+          div.className = 'conv-item' + (c.id === state.selectedConversationId ? ' active' : '');
+          div.textContent = c.title;
+          div.onclick = () => selectConversation(c.id);
+          list.appendChild(div);
+        });
+      }
+
+      async function selectConversation(id) {
+        state.selectedConversationId = id;
+        renderConversations();
+        const full = await api(`/api/conversations/${id}/full`);
+        setConvTitle(full.conversation.title);
+        renderMessages(full.turns);
+      }
+
+      function renderMessages(turns) {
+        const box = document.getElementById('messages');
+        box.innerHTML = '';
+        if (!state.selectedConversationId) {
+          setConvTitle('No conversation selected');
+          return;
+        }
+        turns.forEach((t) => {
+          if (t.user_text) {
+            const u = document.createElement('div');
+            u.className = 'msg user';
+            u.textContent = t.user_text;
+            box.appendChild(u);
+          }
+          if (t.assistant_text) {
+            const a = document.createElement('div');
+            a.className = 'msg assistant';
+            a.textContent = t.assistant_text;
+            box.appendChild(a);
+          }
+        });
+        box.scrollTop = box.scrollHeight;
+      }
+
+      async function sendPrompt() {
+        const input = document.getElementById('promptInput');
+        const prompt = input.value.trim();
+        if (!prompt) return;
+        input.value = '';
+        try {
+          if (state.selectedConversationId) {
+            const res = await api('/api/chat', { method:'POST', body: JSON.stringify({ conversationId: state.selectedConversationId, prompt }) });
+            // Move conversation to top in sidebar with updated timestamp
+            const updatedItem = { id: res.conversation.id, title: res.conversation.title, updated: res.conversation.updated };
+            state.conversations = [updatedItem, ...state.conversations.filter(c => c.id !== updatedItem.id)];
+            renderConversations();
+            // Append new turn directly without refetching full conversation
+            const box = document.getElementById('messages');
+            if (res.turn.user_text) {
+              const u = document.createElement('div');
+              u.className = 'msg user';
+              u.textContent = res.turn.user_text;
+              box.appendChild(u);
+            }
+            if (res.turn.assistant_text) {
+              const a = document.createElement('div');
+              a.className = 'msg assistant';
+              a.textContent = res.turn.assistant_text;
+              box.appendChild(a);
+            }
+            box.scrollTop = box.scrollHeight;
+          } else {
+            const res = await api('/api/chat', { method:'POST', body: JSON.stringify({ prompt }) });
+            state.selectedConversationId = res.conversation.id;
+            // Update sidebar locally without extra requests
+            const newItem = { id: res.conversation.id, title: res.conversation.title, updated: res.conversation.updated };
+            state.conversations = [newItem, ...state.conversations.filter(c => c.id !== newItem.id)];
+            renderConversations();
+            // Set title and render first turn directly from response
+            setConvTitle(res.conversation.title);
+            renderMessages([{ id: res.turn.id, index: res.turn.index, user_text: res.turn.user_text, assistant_text: res.turn.assistant_text, user_attachments: res.turn.user_attachments || [], assistant_attachments: [], created: res.turn.created, updated: res.turn.updated }]);
+          }
+        } catch (e) {
+          alert('Error: ' + e.message);
+        }
+      }
+
+      async function doLogin() {
+        const email = document.getElementById('email').value.trim();
+        const password = document.getElementById('password').value.trim();
+        const err = document.getElementById('authError'); err.textContent = '';
+        try {
+          await api('/api/auth/login', { method:'POST', body: JSON.stringify({ email, password }) });
+          await bootstrap();
+        } catch (e) { err.textContent = e.message; }
+      }
+      async function doRegister() {
+        const email = document.getElementById('email').value.trim();
+        const password = document.getElementById('password').value.trim();
+        const name = document.getElementById('name').value.trim();
+        const err = document.getElementById('authError'); err.textContent = '';
+        try {
+          await api('/api/auth/signup', { method:'POST', body: JSON.stringify({ email, password, name }) });
+          await api('/api/auth/login', { method:'POST', body: JSON.stringify({ email, password }) });
+          await bootstrap();
+        } catch (e) { err.textContent = e.message; }
+      }
+      async function doLogout() {
+        try { await api('/api/auth/logout', { method:'POST' }); } catch {}
+        state.me = null; state.selectedConversationId = null; state.conversations = [];
+        document.getElementById('promptInput').value = '';
+        document.getElementById('messages').innerHTML = '';
+        show('auth');
+      }
+
+      function newChat() {
+        state.selectedConversationId = null;
+        renderConversations();
+        document.getElementById('messages').innerHTML = '';
+        setConvTitle('No conversation selected');
+        document.getElementById('promptInput').focus();
+      }
+
+      function init() {
+        document.getElementById('sendBtn').onclick = sendPrompt;
+        document.getElementById('promptInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendPrompt(); });
+        document.getElementById('loginBtn').onclick = doLogin;
+        document.getElementById('registerBtn').onclick = doRegister;
+        document.getElementById('logoutBtn').onclick = doLogout;
+        document.getElementById('newChatBtn').onclick = newChat;
+        bootstrap();
+      }
+
+      if (document.readyState === 'loading') {
+        window.addEventListener('DOMContentLoaded', init);
+      } else {
+        init();
+      }
+    </script>
+  </body>
+</html>
