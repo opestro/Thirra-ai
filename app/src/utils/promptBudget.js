@@ -12,7 +12,7 @@ export function applyPromptBudgetGuard({ baseHistory, inputMessages, prompt, PRO
   const summaryIndex = baseHistory.findIndex(m => m instanceof SystemMessage && String(m.content || "").startsWith("Earlier conversation summary (compact):"));
   if (summaryIndex >= 0 && isRepeatQuestion) {
     historyMsgs = [...baseHistory.slice(0, summaryIndex), ...baseHistory.slice(summaryIndex + 1)];
-    console.log("[Prompt Budget] Skipped summary due to repeated question heuristic");
+
   }
 
   // Proactive compression if history alone exceeds cap
@@ -29,7 +29,7 @@ export function applyPromptBudgetGuard({ baseHistory, inputMessages, prompt, PRO
       });
       const prefix = historyMsgs.slice(0, Math.max(0, n - 4));
       historyMsgs = [...prefix, ...compressedPrior, ...keepTail];
-      console.log("[Prompt Budget] Compressed prior recent messages due to history cap");
+
     }
   }
 
@@ -46,6 +46,6 @@ export function applyPromptBudgetGuard({ baseHistory, inputMessages, prompt, PRO
     }
   }
 
-  console.log(`[Prompt Budget] history_chars=${historyMsgs.reduce((a,m)=>a+String(m.content||'').length,0)} input_chars=${inputChars} total_chars=${totalChars}`);
+
   return { historyMsgs, totalChars };
 }

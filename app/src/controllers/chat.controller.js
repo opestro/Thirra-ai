@@ -2,7 +2,7 @@ import { generateTitleFromPrompt } from '../services/llm.service.js';
 import { createConversation, getNextTurnIndex, createTurn } from '../services/chat.service.js';
 import { isValidPrompt, formatChatResponse } from '../utils/chat.utils.js';
 import { extractAssistantAttachments } from '../services/attachments.service.js';
-import { generateAssistantTextWithMemory } from '../services/langchain.service.js';
+import { generateAssistantTextWithMemory, streamAssistantTextWithMemory } from '../services/langchain.service.js';
 
 // startChat()
 export async function startChat(req, res, next) {
@@ -81,6 +81,81 @@ export async function Chat(req, res, next) {
     }
     return await startChat(req, res, next);
   } catch (err) {
+    next(err);
+  }
+}
+
+// streamChat() - NDJSON chunked streaming
+export async function streamChat(req, res, next) {
+  try {
+    const { conversationId, prompt } = req.body || {};
+    if (!isValidPrompt(prompt)) {
+      res.status(400).set('Content-Type', 'application/json').end(JSON.stringify({ error: 'prompt required' }));
+      return;
+    }
+
+    // Prepare streaming headers
+    res.setHeader('Content-Type', 'application/x-ndjson');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    const userFiles = (req.files && req.files.user_attachments) || [];
+
+    let conversation;
+    let index;
+    if (conversationId) {
+      index = await getNextTurnIndex(req, conversationId);
+      // Fetch conversation to provide title for UI init
+      try {
+        const c = await req.pb.collection('conversations').getOne(conversationId);
+        conversation = { id: c.id, title: c.title, created: c.created, updated: c.updated };
+      } catch {
+        conversation = { id: conversationId, title: 'Conversation', created: '', updated: '' };
+      }
+    } else {
+      // New conversation flow
+      const title = await generateTitleFromPrompt(prompt);
+      const c = await createConversation(req, title);
+      conversation = { id: c.id, title: c.title, created: c.created, updated: c.updated };
+      index = 1;
+    }
+
+    // Send init event so frontend can prepare UI
+    res.write(JSON.stringify({ type: 'init', conversation, index }) + '\n');
+
+    const chunkGen = await streamAssistantTextWithMemory({
+      pb: req.pb,
+      conversationId: conversation.id,
+      prompt,
+      files: userFiles,
+      userInstruction: req.user?.instruction,
+    });
+
+    let assistantText = '';
+    for await (const chunk of chunkGen) {
+      assistantText += chunk;
+      res.write(JSON.stringify({ type: 'chunk', text: chunk }) + '\n');
+    }
+
+    const assistantAttachments = extractAssistantAttachments(assistantText);
+    const turn = await createTurn(req, {
+      conversationId: conversation.id,
+      index,
+      prompt,
+      assistantText,
+      files: userFiles,
+      assistantAttachments,
+    });
+
+    const finalPayload = formatChatResponse(conversation, turn);
+    res.write(JSON.stringify({ type: 'final', data: finalPayload }) + '\n');
+    res.end();
+  } catch (err) {
+    try {
+      res.write(JSON.stringify({ type: 'error', message: err?.message || 'stream failed' }) + '\n');
+    } catch {}
+    res.end();
+    // Also pass to error middleware for logging
     next(err);
   }
 }

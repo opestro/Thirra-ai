@@ -230,69 +230,105 @@
         const input = document.getElementById('promptInput');
         const attachInput = document.getElementById('attachInput');
         const preview = document.getElementById('attachPreview');
+        const box = document.getElementById('messages');
         const prompt = input.value.trim();
         const hasFiles = attachInput.files && attachInput.files.length > 0;
         if (!prompt) return;
+
+        // Reset inputs
         input.value = '';
         preview.textContent = '';
+
+        // Render user bubble immediately
+        const u = document.createElement('div');
+        u.className = 'msg user';
+        u.textContent = prompt;
+        box.appendChild(u);
+
+        // Prepare assistant bubble for live updates
+        const a = document.createElement('div');
+        a.className = 'msg assistant';
+        a.textContent = '';
+        box.appendChild(a);
+        box.scrollTop = box.scrollHeight;
+
         try {
-          if (state.selectedConversationId) {
-            let res;
-            if (hasFiles) {
-              const fd = new FormData();
-              fd.append('conversationId', state.selectedConversationId);
-              fd.append('prompt', prompt);
-              Array.from(attachInput.files).forEach(file => fd.append('user_attachments', file));
-              res = await apiForm('/api/chat', fd);
-            } else {
-              res = await api('/api/chat', { method:'POST', body: JSON.stringify({ conversationId: state.selectedConversationId, prompt }) });
-            }
-            // Move conversation to top in sidebar with updated timestamp
-            const updatedItem = { id: res.conversation.id, title: res.conversation.title, updated: res.conversation.updated };
-            state.conversations = [updatedItem, ...state.conversations.filter(c => c.id !== updatedItem.id)];
-            renderConversations();
-            // Append new turn directly without refetching full conversation
-            const box = document.getElementById('messages');
-            if (res.turn.user_text) {
-              const u = document.createElement('div');
-              u.className = 'msg user';
-              u.textContent = res.turn.user_text;
-              renderAttachments(u, 'user', res.turn);
-              box.appendChild(u);
-            }
-            if (res.turn.assistant_text) {
-              const a = document.createElement('div');
-              a.className = 'msg assistant';
-              a.textContent = res.turn.assistant_text;
-              renderAttachments(a, 'assistant', res.turn);
-              box.appendChild(a);
-            }
-            // Clear file selection after send
-            attachInput.value = '';
-            box.scrollTop = box.scrollHeight;
+          // Build payload
+          let res;
+          if (hasFiles) {
+            const fd = new FormData();
+            if (state.selectedConversationId) fd.append('conversationId', state.selectedConversationId);
+            fd.append('prompt', prompt);
+            Array.from(attachInput.files).forEach(file => fd.append('user_attachments', file));
+            res = await fetch('/api/chat/stream', { method: 'POST', credentials: 'include', body: fd });
           } else {
-            let res;
-            if (hasFiles) {
-              const fd = new FormData();
-              fd.append('prompt', prompt);
-              Array.from(attachInput.files).forEach(file => fd.append('user_attachments', file));
-              res = await apiForm('/api/chat', fd);
-            } else {
-              res = await api('/api/chat', { method:'POST', body: JSON.stringify({ prompt }) });
-            }
-            state.selectedConversationId = res.conversation.id;
-            // Update sidebar locally without extra requests
-            const newItem = { id: res.conversation.id, title: res.conversation.title, updated: res.conversation.updated };
-            state.conversations = [newItem, ...state.conversations.filter(c => c.id !== newItem.id)];
-            renderConversations();
-            // Set title and render first turn directly from response
-            setConvTitle(res.conversation.title);
-            renderMessages([{ id: res.turn.id, index: res.turn.index, user_text: res.turn.user_text, assistant_text: res.turn.assistant_text, user_attachments: res.turn.user_attachments || [], assistant_attachments: res.turn.assistant_attachments || [], created: res.turn.created, updated: res.turn.updated }]);
-            // Clear file selection after send
-            attachInput.value = '';
+            const body = state.selectedConversationId ? { conversationId: state.selectedConversationId, prompt } : { prompt };
+            res = await fetch('/api/chat/stream', {
+              method: 'POST',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            });
           }
+          if (!res.ok) throw new Error((await res.text()) || ('HTTP ' + res.status));
+
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
+          let finalPayload = null;
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop();
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              let msg;
+              try { msg = JSON.parse(line); } catch { continue; }
+              if (msg.type === 'init') {
+                const c = msg.conversation;
+                // If starting new chat, set state and sidebar title
+                if (!state.selectedConversationId) {
+                  state.selectedConversationId = c.id;
+                  const newItem = { id: c.id, title: c.title, updated: c.updated };
+                  state.conversations = [newItem, ...state.conversations.filter(ci => ci.id !== newItem.id)];
+                  renderConversations();
+                  setConvTitle(c.title || 'Conversation');
+                } else {
+                  // Move existing conversation to top
+                  const updatedItem = { id: c.id, title: c.title || 'Conversation', updated: c.updated };
+                  state.conversations = [updatedItem, ...state.conversations.filter(ci => ci.id !== updatedItem.id)];
+                  renderConversations();
+                }
+              } else if (msg.type === 'chunk') {
+                a.textContent += msg.text || '';
+                box.scrollTop = box.scrollHeight;
+              } else if (msg.type === 'final') {
+                finalPayload = msg.data;
+                // Render attachments now that turn is persisted
+                renderAttachments(u, 'user', finalPayload.turn);
+                renderAttachments(a, 'assistant', finalPayload.turn);
+                // Update sidebar with latest updated timestamp
+                const c = finalPayload.conversation;
+                const updatedItem = { id: c.id, title: c.title, updated: c.updated };
+                state.conversations = [updatedItem, ...state.conversations.filter(ci => ci.id !== updatedItem.id)];
+                renderConversations();
+                setConvTitle(c.title);
+              } else if (msg.type === 'error') {
+                a.textContent = 'Error: ' + (msg.message || 'stream failed');
+                box.scrollTop = box.scrollHeight;
+              }
+            }
+          }
+
+          // Clear file selection after streaming
+          attachInput.value = '';
         } catch (e) {
-          alert('Error: ' + e.message);
+          a.textContent = 'Error: ' + e.message;
+        } finally {
+          box.scrollTop = box.scrollHeight;
         }
       }
 

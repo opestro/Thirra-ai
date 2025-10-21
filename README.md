@@ -1,14 +1,28 @@
 # Thirra-ai
 
 Quick Setup (.env)
-- Create a `.env` file in the project root with:
+- Copy `.env.example` to `.env` and fill in values:
   - `PORT=4000`
-  - `NODE_ENV=development`
+  - `NODE_ENV=development` (or `production`)
   - `POCKETBASE_URL=http://127.0.0.1:8090`
   - `OPENROUTER_API_KEY=<YOUR_OPENROUTER_KEY>`
   - `OPENROUTER_MODEL=openai/gpt-4o-mini` (or any OpenRouter-supported model)
   - `OPENROUTER_BASE_URL=https://openrouter.ai/api/v1`
+  - See `.env.example` for optional tuning vars (prompt budget, summarization, embeddings, RAG).
 
+Scripts (Dev/Prod)
+- `npm run rundev` — launches the server in development mode and auto-opens the testing UI at `http://localhost:4000/`.
+- `npm start` — runs the server in production mode; testing UI is disabled and only the API is served at `http://localhost:4000/api`.
+
+Optional Env (tuning)
+- `OPENROUTER_EMBED_MODEL` — embeddings model, defaults to `openai/text-embedding-3-large`
+- `RECENT_MESSAGE_COUNT` — history messages to keep recent, defaults to `3`
+- `SUMMARY_CAP_CHARS` — trim summary chars when budget is tight, defaults to `600`
+- `PROMPT_CHAR_BUDGET` — total prompt char budget, defaults to `4500`
+- `RAG_TOP_K` — number of top similar chunks to include, defaults to `2`
+- `RETRIEVAL_CHUNK_MAX_CHARS` — max chars per retrieved chunk, defaults to `450`
+
+Notes
 - For LangChain `ChatOpenAI`, set `baseURL` via `configuration.baseURL` (top-level `baseURL` is ignored by the library).
 - The server includes OpenRouter-recommended headers (`HTTP-Referer`, `X-Title`).
 
@@ -36,6 +50,9 @@ Conversations
 Chat (LLM via OpenRouter + LangChain Memory)
 - `POST /chat` → `201 { conversation, turn }`
   - Start new: JSON `{ prompt }` → creates a conversation and seeds memory with the first turn
+- `POST /chat/stream` → NDJSON stream (`init`, `chunk`, `final`)
+  - Start new: JSON `{ prompt }` or multipart form with `user_attachments` to stream assistant text
+  - Append: JSON `{ conversationId, prompt }` or multipart form with `user_attachments`
 
 OpenRouter Setup & Verification
 - Ensure `.env` variables:

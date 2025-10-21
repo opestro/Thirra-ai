@@ -1,11 +1,11 @@
 import { SystemMessage } from "@langchain/core/messages";
 
-const vectorStores = new Map(); // conversationId -> { docs: [{ text, embedding }], indexedCount: number, seenTexts: Set<string> }
+const vectorStores = new Map(); // conversationId -> { docs: [{ text, embedding }], indexedCount: number, seenTexts: Set<string>, indexedTurnIds?: Set<string> }
 
-export const RAG_TOP_K = 2;
-export const CHUNK_SIZE = 1000;
-export const CHUNK_OVERLAP = 150;
-export const RETRIEVAL_CHUNK_MAX_CHARS = 450;
+export const RAG_TOP_K = parseInt(process.env.RAG_TOP_K || "2", 10)
+export const CHUNK_SIZE = 1000
+export const CHUNK_OVERLAP = 150
+export const RETRIEVAL_CHUNK_MAX_CHARS = parseInt(process.env.RETRIEVAL_CHUNK_MAX_CHARS || "450", 10)
 
 export function chunkText(str, size = CHUNK_SIZE, overlap = CHUNK_OVERLAP) {
   const text = String(str || "")
@@ -29,11 +29,40 @@ export function isTextLikeMime(mime) {
   return m.startsWith("text/") || /(json|xml|yaml|yml|csv|markdown|md|html)/i.test(m);
 }
 
+export function isTextLikeFile(file) {
+  const type = String(file?.mimetype || "").toLowerCase();
+  const name = String(file?.originalname || "");
+  const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
+  return type.startsWith('text/')
+    || /(json|xml|yaml|yml|csv|markdown|md|html)/i.test(type)
+    || /(txt|md|json|csv|html|xml|yaml|yml)$/i.test(ext);
+}
+
+function isTextLikeFilename(filename) {
+  const name = String(filename || "");
+  const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
+  return /(txt|md|markdown|json|csv|html|xml|yaml|yml)$/i.test(ext);
+}
+
+async function fetchTurnAttachmentText(turnId, filename) {
+  try {
+    if (!isTextLikeFilename(filename)) return '';
+    const base = process.env.POCKETBASE_URL || 'http://127.0.0.1:8090';
+    const url = `${base}/api/files/turns/${turnId}/${encodeURIComponent(filename)}`;
+    const res = await fetch(url);
+    if (!res.ok) return '';
+    const text = await res.text();
+    return String(text || '').trim();
+  } catch (_) {
+    return '';
+  }
+}
+
 export async function ensureIndexedForConversation({ pb, conversationId, embeddings, files = [] }) {
   if (!conversationId) return;
   let store = vectorStores.get(conversationId);
   if (!store) {
-    store = { docs: [], indexedCount: 0, seenTexts: new Set() };
+    store = { docs: [], indexedCount: 0, seenTexts: new Set(), indexedTurnIds: new Set() };
     vectorStores.set(conversationId, store);
   }
 
@@ -60,11 +89,35 @@ export async function ensureIndexedForConversation({ pb, conversationId, embeddi
     }
   }
 
+  // Index persisted attachments from previous turns (text-like by filename)
+  for (const t of turns) {
+    const already = store.indexedTurnIds?.has(t.id);
+    const userFiles = Array.isArray(t.user_attachments) ? t.user_attachments : [];
+    const assistantFiles = Array.isArray(t.assistant_attachments) ? t.assistant_attachments : [];
+    if (!already && (userFiles.length || assistantFiles.length)) {
+      const filenames = [...userFiles, ...assistantFiles].slice(0, 10);
+      for (const fn of filenames) {
+        const fname = typeof fn === 'string' ? fn : String(fn);
+        if (!isTextLikeFilename(fname)) continue;
+        const contentStr = await fetchTurnAttachmentText(t.id, fname);
+        if (contentStr) {
+          for (const ch of chunkText(contentStr)) {
+            if (!store.seenTexts.has(ch)) {
+              textsToIndex.push(ch);
+              store.seenTexts.add(ch);
+            }
+          }
+        }
+      }
+      store.indexedTurnIds?.add(t.id);
+    }
+  }
+
   // Ephemeral indexing of current request files (text-like only)
   if (Array.isArray(files) && files.length > 0) {
     for (const f of files) {
       const type = f.mimetype || "application/octet-stream";
-      if (isTextLikeMime(type)) {
+      if (isTextLikeFile(f)) {
         let contentStr = "";
         try { contentStr = Buffer.from(f.buffer).toString("utf-8"); } catch (_) {}
         if (contentStr) {
@@ -92,7 +145,7 @@ export async function ensureIndexedForConversation({ pb, conversationId, embeddi
           }
         }
       } catch (err) {
-        console.warn("[RAG] Embedding indexing failed; continuing without new docs:", err?.message || err);
+        
       }
     }
   }
@@ -111,7 +164,7 @@ export async function retrieveRelevantContexts({ conversationId, query, embeddin
   try {
     qVec = await embeddings.embedQuery(q);
   } catch (err) {
-    console.warn("[RAG] Embedding query failed; retrieval disabled:", err?.message || err);
+    
     return [];
   }
 

@@ -61,7 +61,10 @@ function buildAttachmentMessages(files = []) {
   for (const f of files) {
     const name = f.originalname || 'attachment';
     const type = f.mimetype || 'application/octet-stream';
-    const isTextLike = (type || '').startsWith('text/') || /(json|xml|yaml|yml|csv|markdown|md|html)/i.test(type || '');
+    const ext = (name.split('.').pop() || '').toLowerCase();
+    const isTextLike = (type || '').startsWith('text/')
+      || /(json|xml|yaml|yml|csv|markdown|md|html)/i.test(type || '')
+      || /(txt|md|json|csv|html|xml|yaml|yml)$/i.test(ext || '');
     let contentStr = '';
     if (isTextLike) {
       try {
@@ -83,14 +86,14 @@ function buildAttachmentMessages(files = []) {
 }
 
 const RECENT_MESSAGE_COUNT = parseInt(process.env.RECENT_MESSAGE_COUNT || '3', 10);
-const RAG_TOP_K = 2;
+const RAG_TOP_K = parseInt(process.env.RAG_TOP_K || '2', 10);
 const CHUNK_SIZE = 1000;
 const CHUNK_OVERLAP = 150;
-const RETRIEVAL_CHUNK_MAX_CHARS = 450; // tighter per chunk
-const PROMPT_CHAR_BUDGET = 4500; // ~1100 tokens heuristic
+const RETRIEVAL_CHUNK_MAX_CHARS = parseInt(process.env.RETRIEVAL_CHUNK_MAX_CHARS || '450', 10);
+const PROMPT_CHAR_BUDGET = parseInt(process.env.PROMPT_CHAR_BUDGET || '4500', 10);
 const MAX_HISTORY_CHARS = 1600; // proactive cap before total budget
 const COMPRESSED_RECENT_CHARS = 240; // per compressed recent message
-const SUMMARY_CAP_CHARS = 600; // tighter summary cap
+const SUMMARY_CAP_CHARS = parseInt(process.env.SUMMARY_CAP_CHARS || '600', 10);
 
 
 
@@ -169,12 +172,11 @@ export async function generateAssistantTextWithMemory({ pb, conversationId, prom
 
   // Build history messages as before
   const baseHistory = await buildSummarizedHistory({ pb, conversationId, model, instruction: userInstruction });
-  
-  // Compute character budgets
+
   const historyCharLen = baseHistory.reduce((acc, m) => acc + String(m.content || '').length, 0);
   const inputCharsCombined = inputMessages.reduce((acc, m) => acc + String(m.content || '').length, 0);
   const { historyMsgs, totalChars } = applyPromptBudgetGuard({ baseHistory, inputMessages, prompt, PROMPT_CHAR_BUDGET, MAX_HISTORY_CHARS, COMPRESSED_RECENT_CHARS, SUMMARY_CAP_CHARS });
-console.log(`[Prompt Budget] history_chars=${historyMsgs.reduce((a,m)=>a+String(m.content||'').length,0)} input_chars=${inputCharsCombined} total_chars=${totalChars}`);
+
   
   let result;
   try {
@@ -191,8 +193,129 @@ console.log(`[Prompt Budget] history_chars=${historyMsgs.reduce((a,m)=>a+String(
   const promptTokens = usage?.input_tokens ?? usage?.promptTokens;
   const completionTokens = usage?.output_tokens ?? usage?.completionTokens;
   const totalTokens = usage?.total_tokens ?? usage?.totalTokens ?? ((promptTokens != null && completionTokens != null) ? (promptTokens + completionTokens) : undefined);
-  console.log(`[LLM Tokens] conv=${conversationId || 'new'} prompt=${promptTokens ?? 'n/a'} completion=${completionTokens ?? 'n/a'} total=${totalTokens ?? 'n/a'}`);
+
   
+  console.log(`[LLM Tokens] conv=${conversationId || 'new'} prompt=${promptTokens ?? 'n/a'} completion=${completionTokens ?? 'n/a'} total=${totalTokens ?? 'n/a'}`);
   const content = result?.content;
   return typeof content === 'string' ? content : JSON.stringify(content);
+}
+
+export async function streamAssistantTextWithMemory({ pb, conversationId, prompt, files = [], userInstruction }) {
+  const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+  const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini';
+  const OPENROUTER_BASE_URL = process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
+
+  if (!OPENROUTER_API_KEY) {
+    const err = new Error('OpenRouter API key missing');
+    err.status = 500;
+    throw err;
+  }
+
+  const systemPrompt = buildSystemPrompt(userInstruction);
+
+  const promptTemplate = ChatPromptTemplate.fromMessages([
+    ["system", systemPrompt],
+    new MessagesPlaceholder("history"),
+    new MessagesPlaceholder("input_messages"),
+  ]);
+
+  const model = new ChatOpenAI({
+    apiKey: OPENROUTER_API_KEY,
+    model: OPENROUTER_MODEL,
+    configuration: {
+      baseURL: OPENROUTER_BASE_URL,
+      defaultHeaders: {
+        'HTTP-Referer': process.env.APP_BASE_URL || 'http://localhost:4000',
+        'X-Title': 'Thirra AI',
+      },
+    },
+  });
+
+  const embeddings = createEmbeddingsClient();
+  await ensureIndexedForConversation({ pb, conversationId, embeddings, files });
+
+  let topK = RAG_TOP_K;
+  let perChunk = RETRIEVAL_CHUNK_MAX_CHARS;
+  let retrieved = await retrieveRelevantContexts({ conversationId, query: prompt, embeddings, topK, maxCharsPerChunk: perChunk });
+  const retrievedMsg = retrieved.length ? new SystemMessage(`Retrieved context (top-${topK}):\n` + retrieved.map((x) => `- ${x}`).join('\n')) : null;
+
+  let inputMessages = [
+    ...(retrievedMsg ? [retrievedMsg] : []),
+    ...buildAttachmentMessages(files),
+    new HumanMessage(String(prompt)),
+  ];
+  const inputCharLen = inputMessages.reduce((acc, m) => acc + String(m.content || '').length, 0);
+  if (inputCharLen > PROMPT_CHAR_BUDGET) {
+    topK = 2; perChunk = 350;
+    retrieved = await retrieveRelevantContexts({ conversationId, query: prompt, embeddings, topK, maxCharsPerChunk: perChunk });
+    const retr2 = retrieved.length ? new SystemMessage(`Retrieved context (top-${topK}):\n` + retrieved.map((x) => `- ${x}`).join('\n')) : null;
+    inputMessages = [
+      ...(retr2 ? [retr2] : []),
+      ...buildAttachmentMessages(files),
+      new HumanMessage(String(prompt)),
+    ];
+  }
+  const inputCharLen2 = inputMessages.reduce((acc, m) => acc + String(m.content || '').length, 0);
+  if (inputCharLen2 > PROMPT_CHAR_BUDGET) {
+    topK = 1; perChunk = 300;
+    retrieved = await retrieveRelevantContexts({ conversationId, query: prompt, embeddings, topK, maxCharsPerChunk: perChunk });
+    const retr3 = retrieved.length ? new SystemMessage(`Retrieved context (top-${topK}):\n` + retrieved.map((x) => `- ${x}`).join('\n')) : null;
+    inputMessages = [
+      ...(retr3 ? [retr3] : []),
+      ...buildAttachmentMessages(files),
+      new HumanMessage(String(prompt)),
+    ];
+  }
+
+  const chain = promptTemplate.pipe(model);
+  const baseHistory = await buildSummarizedHistory({ pb, conversationId, model, instruction: userInstruction });
+
+  const inputCharsCombined = inputMessages.reduce((acc, m) => acc + String(m.content || '').length, 0);
+  const { historyMsgs, totalChars } = applyPromptBudgetGuard({ baseHistory, inputMessages, prompt, PROMPT_CHAR_BUDGET, MAX_HISTORY_CHARS, COMPRESSED_RECENT_CHARS, SUMMARY_CAP_CHARS });
+
+
+  let stream;
+  try {
+    stream = await chain.stream({ input_messages: inputMessages, history: historyMsgs });
+  } catch (e) {
+    if (String(e?.message || '').includes('401')) {
+      console.warn('[LLM] Unauthorized; retrying stream with OpenRouter key...');
+      stream = await chain.stream({ input_messages: inputMessages, history: historyMsgs });
+    } else {
+      throw e;
+    }
+  }
+
+  async function* textChunks() {
+    let promptTokens;
+    let completionTokens;
+    let totalTokens;
+    for await (const chunk of stream) {
+      const usage = chunk?.usage_metadata || chunk?.response_metadata?.usage || chunk?.response_metadata?.tokenUsage;
+      if (usage) {
+        promptTokens = usage?.input_tokens ?? usage?.promptTokens ?? promptTokens;
+        completionTokens = usage?.output_tokens ?? usage?.completionTokens ?? completionTokens;
+        totalTokens = usage?.total_tokens ?? usage?.totalTokens ?? ((promptTokens != null && completionTokens != null) ? (promptTokens + completionTokens) : totalTokens);
+      }
+      const c = chunk?.content;
+      if (typeof c === 'string') {
+        yield c;
+      } else if (Array.isArray(c)) {
+        const textParts = c.map((part) => {
+          if (typeof part === 'string') return part;
+          if (part && typeof part.text === 'string') return part.text;
+          return '';
+        }).join('');
+        if (textParts) yield textParts;
+      } else {
+        const t = String(c || '');
+        if (t) yield t;
+      }
+    }
+    if (promptTokens != null || completionTokens != null || totalTokens != null) {
+      console.log(`[LLM Tokens/Stream] conv=${conversationId || 'new'} prompt=${promptTokens ?? 'n/a'} completion=${completionTokens ?? 'n/a'} total=${totalTokens ?? 'n/a'}`);
+    }
+  }
+
+  return textChunks();
 }

@@ -4,8 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "start": "node app/src/server.js",
-    "dev": "node app/src/server.js"
+    "start": "cross-env NODE_ENV=production node app/src/server.js",
+    "rundev": "cross-env NODE_ENV=development node app/src/server.js"
   },
   "repository": {
     "type": "git",
@@ -20,8 +20,10 @@
   },
   "homepage": "https://github.com/Malek4522/Thirra-ai#readme",
   "dependencies": {
+    "@ai-sdk/openai": "^2.0.53",
     "@langchain/core": "^1.0.1",
     "@langchain/openai": "^1.0.0",
+    "ai": "^5.0.76",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
@@ -30,5 +32,8 @@
     "morgan": "^1.10.1",
     "multer": "^2.0.2",
     "pocketbase": "^0.26.2"
+  },
+  "devDependencies": {
+    "cross-env": "^10.1.0"
   }
 }
