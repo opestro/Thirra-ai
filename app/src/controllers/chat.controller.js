@@ -48,6 +48,8 @@ export async function streamChat(req, res, next) {
       res.write(JSON.stringify({ type: 'chunk', text: chunk }) + '\n');
     }
 
+    const usage = (typeof chunkGen.getUsage === 'function') ? chunkGen.getUsage() : {};
+
     const assistantAttachments = extractAssistantAttachments(assistantText);
     const turn = await createTurn(req, {
       conversationId: conversation.id,
@@ -55,6 +57,7 @@ export async function streamChat(req, res, next) {
       assistantText,
       files: userFiles,
       assistantAttachments,
+      usage,
     });
 
     const finalPayload = formatChatResponse(conversation, turn);

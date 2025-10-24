@@ -1,84 +1,82 @@
-# Thirra-ai
+# Thirra AI Server
 
-Quick Setup (.env)
-- Copy `.env.example` to `.env` and fill in values:
-  - `PORT=4000`
-  - `NODE_ENV=development` (or `production`)
-  - `POCKETBASE_URL=http://127.0.0.1:8090`
-  - `OPENROUTER_API_KEY=<YOUR_OPENROUTER_KEY>`
-  - `OPENROUTER_MODEL=openai/gpt-4o-mini` (or any OpenRouter-supported model)
-  - `OPENROUTER_BASE_URL=https://openrouter.ai/api/v1`
-  - See `.env.example` for optional tuning vars (prompt budget, summarization, embeddings, RAG).
+A minimal Express API with PocketBase auth and OpenRouter-powered chat streaming. It serves REST endpoints under `/api`, supports cookie or Bearer authentication, and streams NDJSON responses for chat.
 
-Scripts (Dev/Prod)
-- `npm run rundev` — launches the server in development mode and auto-opens the testing UI at `http://localhost:4000/`.
-- `npm start` — runs the server in production mode; testing UI is disabled and only the API is served at `http://localhost:4000/api`.
+## Quick Start
+- Requirements: Node 18+ (global `fetch`), a running PocketBase instance.
+- Setup:
+  1) `cp .env.example .env` and fill values
+  2) `npm install`
+  3) Development: `npm run rundev` (opens testing UI)
+  4) Production: `npm start`
+- Default base URL: `http://localhost:4000`
+- API base: `http://localhost:4000/api`
 
-Optional Env (tuning)
-- `OPENROUTER_EMBED_MODEL` — embeddings model, defaults to `openai/text-embedding-3-large`
-- `RECENT_MESSAGE_COUNT` — history messages to keep recent, defaults to `3`
-- `SUMMARY_CAP_CHARS` — trim summary chars when budget is tight, defaults to `600`
-- `PROMPT_CHAR_BUDGET` — total prompt char budget, defaults to `4500`
-- `RAG_TOP_K` — number of top similar chunks to include, defaults to `2`
-- `RETRIEVAL_CHUNK_MAX_CHARS` — max chars per retrieved chunk, defaults to `450`
+## Environment
+Required
+- `PORT` — server port (default `4000`)
+- `APP_BASE_URL` — e.g., `http://localhost:4000`
+- `NODE_ENV` — `development` or `production`
+- `POCKETBASE_URL` — e.g., `http://127.0.0.1:8090`
+- `OPENROUTER_API_KEY` — your OpenRouter key (format `sk-or-v1...`)
 
 Notes
-- For LangChain `ChatOpenAI`, set `baseURL` via `configuration.baseURL` (top-level `baseURL` is ignored by the library).
-- The server includes OpenRouter-recommended headers (`HTTP-Referer`, `X-Title`).
+- OpenRouter `baseUrl`, `model`, and prompt/memory tuning values are fixed in `app/src/config/config.js`.
+  Edit that file to adjust: `openrouter.model`, `openrouter.embedModel`, and `prompt` values like `recentMessageCount`, `ragTopK`, `promptCharBudget`, etc.
 
-Base URL
-- API base: `http://localhost:4000/api`
-- Use cookies (set on login) or `Authorization: Bearer <token>`
+## Authentication
+- Cookie session (set on login) or `Authorization: Bearer <token>`
+- Middleware tries cookie first, then Bearer fallback
 
+## API Endpoints
 Auth
-- `POST /auth/signup` — Body: `{ email, password, name }` → `201 { id, email, name, instruction }`
-- `POST /auth/login` — Body: `{ email, password }` → `200 { token, user }` and sets cookie
-- `POST /auth/logout` → `200 { success: true }`
-- `GET /auth/me` → `200 { user }`
+- `POST /api/auth/signup` — `{ email, password, name }` → `201 { id, email, name, instruction }`
+- `POST /api/auth/login` — `{ email, password }` → `200 { token, user }` and sets cookie
+- `POST /api/auth/logout` → `200 { success: true }` (auth required)
+- `GET /api/auth/me` → `200 { user }` (auth required)
 
-Profile
-- `GET /users/me` → `200 { user }`
-- `PATCH /users/me` — Body: `{ name?, instruction? }` → `200 { id, email, name, instruction }`
-  - Do not send `email` (email changes are disabled)
-- `PATCH /users/me/password` — Body: `{ oldPassword, newPassword }` → `200 { success: true }`
-- `DELETE /users/me` → `204 No Content`
+Users
+- `GET /api/users/me` → `200 { user }`
+- `PATCH /api/users/me` — `{ name?, instruction? }` → `200 { id, email, name, instruction }`
+- `PATCH /api/users/me/password` — `{ oldPassword, newPassword }` → `200 { success: true }`
+- `DELETE /api/users/me` → `204 No Content`
 
 Conversations
-- `GET /conversations` → `200 { items: [{ id, title, updated }] }`
-- `GET /conversations/:id` → `200 { conversation, turns }`
+- `GET /api/conversations` → `200 { items: [{ id, title, updated }] }`
+- `GET /api/conversations/:id` → `200 { conversation, turns }`
 
-Chat (LLM via OpenRouter + LangChain Memory)
-- `POST /chat` → `201 { conversation, turn }`
-  - Start new: JSON `{ prompt }` → creates a conversation and seeds memory with the first turn
-- `POST /chat/stream` → NDJSON stream (`init`, `chunk`, `final`)
-  - Start new: JSON `{ prompt }` or multipart form with `user_attachments` to stream assistant text
-  - Append: JSON `{ conversationId, prompt }` or multipart form with `user_attachments`
+Chat (NDJSON streaming)
+- `POST /api/chat/stream`
+  - Start new: omit `conversationId`; provide `prompt`
+  - Append: include `{ conversationId, prompt }`
+  - Attachments: multipart `user_attachments` (max 10). Text-like files are included as context for that turn.
+  - Events: `init` (conversation meta), `chunk` (text), `final` (payload), `error`
 
-OpenRouter Setup & Verification
-- Ensure `.env` variables:
-  - `OPENROUTER_API_KEY` (format starts with `sk-or-v1`)
-  - `OPENROUTER_BASE_URL=https://openrouter.ai/api/v1`
-  - `OPENROUTER_MODEL=openai/gpt-4o-mini` (or any supported)
-- Quick test with curl:
-  - `curl -s -X POST "https://openrouter.ai/api/v1/chat/completions" -H "Authorization: Bearer $OPENROUTER_API_KEY" -H "Content-Type: application/json" -d '{"model":"openai/gpt-4o-mini","messages":[{"role":"user","content":"hello"}]}'`
-- If you see `401` errors, verify the key is an OpenRouter key (not an OpenAI key) and that your server is pointing to `OPENROUTER_BASE_URL`. The API returns a clearer message on 401.
-  - Append: JSON `{ conversationId, prompt }` → uses full conversation history for coherent replies
-  - Uploads: multipart `user_attachments` (up to 10 files); text-like files are included in context for that turn
-- Memory: Conversation history is loaded from PocketBase each call and passed via LangChain. The user's `instruction` (from profile) is included in the system prompt.
-- Env required: `OPENROUTER_API_KEY`; optional `OPENROUTER_MODEL`, `OPENROUTER_BASE_URL`
+Unified Chat (title + summary + response)
+- `POST /api/unified-chat/unified` — streams unified output; new conversations auto-title if `conversationId` omitted
+- `POST /api/unified-chat/compatible` — backward-compatible streaming that uses unified service but only the response
 
 Attachments
-- Download: `http://127.0.0.1:8090/api/files/turns/<turnId>/<filename>`
+- Download (PocketBase): `${POCKETBASE_URL}/api/files/turns/<turnId>/<filename>`
 
-Errors (simple)
-- `401` → `{ error: 'Unauthorized' }` (no cookie/token)
-- `400` → `{ error: '<message>' }` (e.g., `prompt required`, `conversationId required`, `oldPassword and newPassword are required`)
+## Dev Utilities
+Run ad-hoc tests (no formal runner configured):
+- `node app/src/dev/testUnifiedOutput.js`
+- `node app/src/dev/testMemoryConfig.js`
+- `node app/src/dev/testPromptBudget.js`
+- `node app/src/dev/testUnifiedIntegration.js`
+
+## OpenRouter Check (curl)
+- Basic check:
+  ```
+  curl -s -X POST "https://openrouter.ai/api/v1/chat/completions" \
+    -H "Authorization: Bearer $OPENROUTER_API_KEY" \
+    -H "Content-Type: application/json" \
+    -d '{"model":"openai/gpt-4o-mini","messages":[{"role":"user","content":"hello"}]}'
+  ```
+- If `401`, verify the key uses the OpenRouter format and your server has a valid key.
+
+## Errors
+- `401` → `{ error: 'Unauthorized' }`
+- `400` → `{ error: '<message>' }` (e.g., missing `prompt`, `oldPassword/newPassword`)
 - `500`/`502` → `{ error: 'OpenRouter request failed' }` or `{ error: 'Server error' }`
-
-Copy-Paste Examples (curl)
-- Login: `curl -X POST -H 'Content-Type: application/json' -c cookies.txt -d '{"email":"user@example.com","password":"secret"}' http://localhost:4000/api/auth/login`
-- Me: `curl -b cookies.txt http://localhost:4000/api/auth/me`
-- Update profile: `curl -X PATCH -H 'Content-Type: application/json' -b cookies.txt -d '{"name":"New Name","instruction":"Your prompt"}' http://localhost:4000/api/users/me`
-- Change password: `curl -X PATCH -H 'Content-Type: application/json' -b cookies.txt -d '{"oldPassword":"old","newPassword":"newPass123"}' http://localhost:4000/api/users/me/password`
-- Start chat: `curl -X POST -H 'Content-Type: application/json' -b cookies.txt -d '{"prompt":"Hello"}' http://localhost:4000/api/chat`
-- Append chat: `curl -X POST -H 'Content-Type: application/json' -b cookies.txt -d '{"conversationId":"<id>","prompt":"Continue"}' http://localhost:4000/api/chat`

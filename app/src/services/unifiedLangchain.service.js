@@ -1,22 +1,13 @@
 import { ChatOpenAI } from "@langchain/openai";
 import { applyPromptBudgetGuard } from "../utils/promptBudget.js";
-// Remove direct rag + summary imports; use layered memory instead
 import { buildCombinedMemory } from "../memory/memoryLayers.js";
 import { collectInputMetrics, relevanceTokenRatio, heuristicQualityScore, logTuningMetrics } from "../utils/eval.js";
+import { buildUnifiedSystemPrompt, parseUnifiedOutput, validateParsedOutput, fallbackParse } from "../utils/unifiedOutput.js";
 import { ChatPromptTemplate, MessagesPlaceholder } from "@langchain/core/prompts";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import config from "../config/config.js";
 import { extractAssignments } from "../utils/extractFacts.js";
 import { upsertFacts, getFactsText } from "../memory/facts.store.js";
-
-
-function buildSystemPrompt(userInstruction, factsText = null) {
-  const base = "You are an assistant. Use the following context only if relevant:\nCONTEXT:\n{context}\nReply concisely and avoid repeating context text.";
-  const instr = userInstruction ? `\nUser instruction: ${String(userInstruction).trim()}` : "";
-  const facts = factsText ? `\n\nKnown facts for this conversation:\n${factsText}\n` : "";
-  return `${base}${facts}${instr}`;
-}
-
 
 function buildAttachmentMessages(files = []) {
   const messages = [];
@@ -52,22 +43,27 @@ function buildAttachmentMessages(files = []) {
 }
 
 // Centralized prompt-related constants
-const RECENT_MESSAGE_COUNT = config.prompt.recentMessageCount;
-const RAG_TOP_K = config.prompt.ragTopK;
-const RETRIEVAL_CHUNK_MAX_CHARS = config.prompt.retrievalChunkMaxChars;
 const PROMPT_CHAR_BUDGET = config.prompt.promptCharBudget;
-const MAX_HISTORY_CHARS = config.prompt.maxHistoryChars; // proactive cap before total budget
-const COMPRESSED_RECENT_CHARS = config.prompt.compressedRecentChars; // per compressed recent message
+const MAX_HISTORY_CHARS = config.prompt.maxHistoryChars;
+const COMPRESSED_RECENT_CHARS = config.prompt.compressedRecentChars;
 const SUMMARY_CAP_CHARS = config.prompt.summaryCapChars;
 const MAX_CONTEXT_TOKENS = config.prompt.maxContextTokens;
 
-
-
-export async function streamAssistantTextWithMemory({ pb, conversationId, prompt, files = [], userInstruction }) {
+/**
+ * Stream unified assistant response with title, summary, and response in one call
+ * @param {Object} params - { pb, conversationId, prompt, files, userInstruction, needsTitle }
+ * @returns {AsyncGenerator} - Streaming generator with unified output parsing
+ */
+export async function streamUnifiedAssistantResponse({ pb, conversationId, prompt, files = [], userInstruction, needsTitle = false }) {
   const { apiKey, model, baseUrl } = config.openrouter;
 
   // Build layered memory
-  const { historyMsgs: baseHistory, contextText: initialContext, metrics, items } = await buildCombinedMemory({ pb, conversationId, query: prompt, instruction: userInstruction });
+  const { historyMsgs: baseHistory, contextText: initialContext, metrics, items } = await buildCombinedMemory({ 
+    pb, 
+    conversationId, 
+    query: prompt, 
+    instruction: userInstruction 
+  });
 
   // Extract and upsert facts from current prompt
   try {
@@ -76,9 +72,16 @@ export async function streamAssistantTextWithMemory({ pb, conversationId, prompt
       upsertFacts(conversationId, facts);
     }
   } catch (_) {}
+
   const factsText = conversationId ? getFactsText(conversationId) : '';
 
-  const systemPrompt = buildSystemPrompt(userInstruction, factsText);
+  // Build unified system prompt
+  const systemPrompt = buildUnifiedSystemPrompt({
+    needsTitle,
+    userInstruction,
+    contextText: initialContext,
+    factsText
+  });
 
   const promptTemplate = ChatPromptTemplate.fromMessages([
     ["system", systemPrompt],
@@ -105,12 +108,21 @@ export async function streamAssistantTextWithMemory({ pb, conversationId, prompt
   ];
 
   // Apply history budget guard
-  const { historyMsgs } = applyPromptBudgetGuard({ baseHistory, inputMessages, prompt, PROMPT_CHAR_BUDGET, MAX_HISTORY_CHARS, COMPRESSED_RECENT_CHARS, SUMMARY_CAP_CHARS });
+  const { historyMsgs } = applyPromptBudgetGuard({ 
+    baseHistory, 
+    inputMessages, 
+    prompt, 
+    PROMPT_CHAR_BUDGET, 
+    MAX_HISTORY_CHARS, 
+    COMPRESSED_RECENT_CHARS, 
+    SUMMARY_CAP_CHARS 
+  });
 
   // Estimate token usage and prune context if exceeding 60% of max window
   let contextText = initialContext;
   const preMetrics = collectInputMetrics({ historyMsgs, contextText, inputMessages });
   const threshold = Math.floor(MAX_CONTEXT_TOKENS * 0.6);
+  
   if (preMetrics.tokenEstimate > threshold && Array.isArray(items) && items.length > 0) {
     // Drop least relevant items until under threshold
     const sorted = [...items].sort((a, b) => a.sim - b.sim);
@@ -130,30 +142,45 @@ export async function streamAssistantTextWithMemory({ pb, conversationId, prompt
     }
   }
 
+  // Update system prompt with final context
+  const finalSystemPrompt = buildUnifiedSystemPrompt({
+    needsTitle,
+    userInstruction,
+    contextText,
+    factsText
+  });
+
+  const finalPromptTemplate = ChatPromptTemplate.fromMessages([
+    ["system", finalSystemPrompt],
+    new MessagesPlaceholder("history"),
+    new MessagesPlaceholder("input_messages"),
+  ]);
+
   // Log pre-phase tuning metrics
   const relPerTok = relevanceTokenRatio({ items, tokenCount: preMetrics.tokenEstimate });
   logTuningMetrics({ phase: 'pre', inputMetrics: preMetrics, relevancePerToken: relPerTok, details: metrics });
 
-  const chain = promptTemplate.pipe(chatModel);
+  const chain = finalPromptTemplate.pipe(chatModel);
 
   let stream;
   try {
-    stream = await chain.stream({ context: contextText, input_messages: inputMessages, history: historyMsgs });
+    stream = await chain.stream({ history: historyMsgs, input_messages: inputMessages });
   } catch (e) {
     if (String(e?.message || '').includes('401')) {
       console.warn('[LLM] Unauthorized; retrying stream with OpenRouter key...');
-      stream = await chain.stream({ context: contextText, input_messages: inputMessages, history: historyMsgs });
+      stream = await chain.stream({ history: historyMsgs, input_messages: inputMessages });
     } else {
       throw e;
     }
   }
 
-  // expose usage counters across the generator lifecycle
+  // Expose usage counters across the generator lifecycle
   let promptTokens;
   let completionTokens;
   let totalTokens;
+  let rawOutput = '';
 
-  async function* textChunks() {
+  async function* unifiedTextChunks() {
     for await (const chunk of stream) {
       const usage = chunk?.usage_metadata || chunk?.response_metadata?.usage || chunk?.response_metadata?.tokenUsage;
       if (usage) {
@@ -161,30 +188,107 @@ export async function streamAssistantTextWithMemory({ pb, conversationId, prompt
         completionTokens = usage?.output_tokens ?? usage?.completionTokens ?? completionTokens;
         totalTokens = usage?.total_tokens ?? usage?.totalTokens ?? ((promptTokens != null && completionTokens != null) ? (promptTokens + completionTokens) : totalTokens);
       }
+      
       const c = chunk?.content;
+      let chunkText = '';
+      
       if (typeof c === 'string') {
-        yield c;
+        chunkText = c;
       } else if (Array.isArray(c)) {
-        const textParts = c.map((part) => {
+        chunkText = c.map((part) => {
           if (typeof part === 'string') return part;
           if (part && typeof part.text === 'string') return part.text;
           return '';
         }).join('');
-        if (textParts) yield textParts;
       } else {
-        const t = String(c || '');
-        if (t) yield t;
+        chunkText = String(c || '');
+      }
+      
+      if (chunkText) {
+        rawOutput += chunkText;
+        yield chunkText;
       }
     }
+    
     if (promptTokens != null || completionTokens != null || totalTokens != null) {
-      console.log(`[LLM Tokens/Stream] conv=${conversationId || 'new'} prompt=${promptTokens ?? 'n/a'} completion=${completionTokens ?? 'n/a'} total=${totalTokens ?? 'n/a'}`);
-      // Post-phase metrics (no full text here; provide usage tokens only)
-      logTuningMetrics({ phase: 'post', inputMetrics: preMetrics, relevancePerToken: relPerTok, outputTokens: totalTokens, details: { contextPruned: contextText.length } });
+      console.log(`[LLM Tokens/Unified] conv=${conversationId || 'new'} prompt=${promptTokens ?? 'n/a'} completion=${completionTokens ?? 'n/a'} total=${totalTokens ?? 'n/a'}`);
+      // Post-phase metrics
+      logTuningMetrics({ 
+        phase: 'post', 
+        inputMetrics: preMetrics, 
+        relevancePerToken: relPerTok, 
+        outputTokens: totalTokens, 
+        details: { contextPruned: contextText.length, unified: true } 
+      });
     }
   }
 
-  const gen = textChunks();
+  const gen = unifiedTextChunks();
+  
+  // Enhanced methods for unified output
   gen.getUsage = () => ({ promptTokens, completionTokens, totalTokens });
   gen.computeQualityScore = (text) => heuristicQualityScore(text);
+  
+  // Parse unified output when stream completes
+  gen.parseOutput = () => {
+    const parsed = parseUnifiedOutput(rawOutput);
+    const validation = validateParsedOutput(parsed, needsTitle);
+    
+    if (!validation.isValid) {
+      console.warn('[Unified] Primary parsing failed, attempting fallback:', validation.missingFields);
+      const fallback = fallbackParse(rawOutput, needsTitle);
+      return {
+        ...fallback,
+        validation,
+        usedFallback: true
+      };
+    }
+    
+    return {
+      ...parsed,
+      validation,
+      usedFallback: false
+    };
+  };
+  
+  // Get raw output for debugging
+  gen.getRawOutput = () => rawOutput;
+  
   return gen;
+}
+
+/**
+ * Generate title only (for backward compatibility)
+ * @param {string} prompt - User prompt to generate title from
+ * @returns {Promise<string>} - Generated title
+ */
+export async function generateTitleFromPrompt(prompt) {
+  const { apiKey, model, baseUrl } = config.openrouter;
+
+  const resp = await fetch(`${baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: 'system', content: 'Generate a concise conversation title (4–6 words). Respond ONLY with the title, no quotes.' },
+        { role: 'user', content: prompt },
+      ],
+    }),
+  });
+  
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '');
+    const err = new Error(text || resp.statusText || 'OpenRouter request failed');
+    err.status = resp.status || 502;
+    throw err;
+  }
+  
+  const data = await resp.json();
+  const content = data?.choices?.[0]?.message?.content || '';
+  const title = typeof content === 'string' ? content : JSON.stringify(content);
+  return String(title).trim().slice(0, 120) || 'New Conversation';
 }

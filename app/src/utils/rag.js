@@ -151,29 +151,34 @@ export async function ensureIndexedForConversation({ pb, conversationId, embeddi
 }
 
 export async function retrieveRelevantContexts({ conversationId, query, embeddings, topK = RAG_TOP_K, maxCharsPerChunk = RETRIEVAL_CHUNK_MAX_CHARS }) {
+  const { chunks } = await retrieveContextsWithScores({ conversationId, query, embeddings, topK, maxCharsPerChunk });
+  return chunks.map(c => c.text);
+}
+
+export async function retrieveContextsWithScores({ conversationId, query, embeddings, topK = RAG_TOP_K, maxCharsPerChunk = RETRIEVAL_CHUNK_MAX_CHARS }) {
   const store = vectorStores.get(conversationId);
-  if (!store || store.docs.length === 0) return [];
+  if (!store || store.docs.length === 0) return { chunks: [], maxSim: 0 };
 
   const q = String(query || "").replace(/\s+/g, " ").trim();
-  if (!q) return [];
+  if (!q) return { chunks: [], maxSim: 0 };
 
   let qVec;
   try {
     qVec = await embeddings.embedQuery(q);
   } catch (err) {
-    
-    return [];
+    return { chunks: [], maxSim: 0 };
   }
 
   const sims = store.docs.map((d, idx) => ({ idx, sim: cosineSim(qVec, d.embedding) }));
   sims.sort((a, b) => b.sim - a.sim);
+  const maxSim = sims.length ? sims[0].sim : 0;
   const top = sims.slice(0, Math.max(1, topK));
   const chunks = [];
-  for (const { idx } of top) {
+  for (const { idx, sim } of top) {
     const t = String(store.docs[idx].text || "").slice(0, maxCharsPerChunk);
-    if (t) chunks.push(t);
+    if (t) chunks.push({ text: t, sim });
   }
-  return chunks;
+  return { chunks, maxSim };
 }
 
 export function cosineSim(a, b) {
