@@ -11,21 +11,18 @@ export async function listConverstations(req, res, next) {
   }
 }
 
-
-
 export async function Conversationdetails(req, res, next) {
   try {
     const { id } = req.params;
     const conversation = await req.pb.collection('conversations').getOne(id);
 
     const turns = await req.pb.collection('turns').getFullList(500, {
-      filter: `conversation = "${id}"`,
-      sort: 'index',
+      filter: `conversation = \"${id}\"`,
+      sort: 'created',
     });
 
     const normalizedTurns = turns.map((t) => ({
       id: t.id,
-      index: t.index,
       user_text: t.user_text,
       assistant_text: t.assistant_text,
       user_attachments: t.user_attachments || [],
@@ -43,16 +40,6 @@ export async function Conversationdetails(req, res, next) {
       },
       turns: normalizedTurns,
     });
-  } catch (err) {
-    next(err);
-  }
-}
-
-export async function deleteConversation(req, res, next) {
-  try {
-    const { id } = req.params;
-    await req.pb.collection('conversations').delete(id);
-    res.status(204).send();
   } catch (err) {
     next(err);
   }

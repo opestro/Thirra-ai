@@ -2,8 +2,9 @@ import { ChatPromptTemplate } from "@langchain/core/prompts";
 import { AIMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
 
 const summaryCache = new Map(); // conversationId -> { summary: string, summarizedCount: number }
-export const RECENT_MESSAGE_COUNT = parseInt(process.env.RECENT_MESSAGE_COUNT || "3", 10);
-export const SUMMARY_CAP_CHARS = parseInt(process.env.SUMMARY_CAP_CHARS || "600", 10);
+import config from "../config/config.js";
+export const RECENT_MESSAGE_COUNT = config.prompt.recentMessageCount;
+export const SUMMARY_CAP_CHARS = config.prompt.summaryCapChars;
 
 export async function messagesToText(msgs) {
   return msgs
@@ -33,7 +34,7 @@ export async function buildSummarizedHistory({ pb, conversationId, model, instru
   if (!conversationId) return [];
   const turns = await pb.collection("turns").getFullList(500, {
     filter: `conversation = "${conversationId}"`,
-    sort: "index",
+    sort: "created",
   });
   const all = [];
   for (const t of turns) {

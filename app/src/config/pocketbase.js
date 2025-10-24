@@ -1,7 +1,7 @@
 import PocketBase from 'pocketbase';
 
-const PB_URL = process.env.POCKETBASE_URL || 'http://127.0.0.1:8090';
+import config from './config.js';
 
 export function createPocketBaseClient() {
-  return new PocketBase(PB_URL);
+  return new PocketBase(config.pocketbase.url);
 }

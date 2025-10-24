@@ -12,7 +12,6 @@ export function formatChatResponse(conversation, turn) {
     },
     turn: {
       id: turn.id,
-      index: turn.index,
       user_text: turn.user_text,
       assistant_text: turn.assistant_text,
       user_attachments: turn.user_attachments || [],

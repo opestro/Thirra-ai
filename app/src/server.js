@@ -2,13 +2,11 @@ import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
 import helmet from 'helmet';
-import { config as dotenvConfig } from 'dotenv';
 import router from './routes/index.js';
 import errorHandler from './middleware/error.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
-
-dotenvConfig();
+import config from './config/config.js';
 
 const app = express();
 
@@ -40,18 +38,18 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, '..', 'public');
 // Serve testing UI only in development
-if (process.env.NODE_ENV !== 'production') {
+if (config.nodeEnv !== 'production') {
   app.use(express.static(publicDir));
 }
 
 app.use(errorHandler);
 
-const PORT = process.env.PORT || 4000;
+const PORT = config.port;
 app.listen(PORT, () => {
   console.log(`Server listening on http://localhost:${PORT}`);
   // In development, auto-open the testing UI in the browser
-  if (process.env.NODE_ENV !== 'production') {
-    const url = process.env.APP_BASE_URL || `http://localhost:${PORT}`;
+  if (config.nodeEnv !== 'production') {
+    const url = config.appBaseUrl;
     try {
       import('node:child_process').then(({ exec }) => {
         const cmd = `start "" ${url}`; // Windows

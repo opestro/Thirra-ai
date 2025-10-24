@@ -2,10 +2,12 @@ import { SystemMessage } from "@langchain/core/messages";
 
 const vectorStores = new Map(); // conversationId -> { docs: [{ text, embedding }], indexedCount: number, seenTexts: Set<string>, indexedTurnIds?: Set<string> }
 
-export const RAG_TOP_K = parseInt(process.env.RAG_TOP_K || "2", 10)
-export const CHUNK_SIZE = 1000
-export const CHUNK_OVERLAP = 150
-export const RETRIEVAL_CHUNK_MAX_CHARS = parseInt(process.env.RETRIEVAL_CHUNK_MAX_CHARS || "450", 10)
+import config from "../config/config.js";
+
+export const RAG_TOP_K = config.prompt.ragTopK;
+export const CHUNK_SIZE = config.prompt.chunkSize;
+export const CHUNK_OVERLAP = config.prompt.chunkOverlap;
+export const RETRIEVAL_CHUNK_MAX_CHARS = config.prompt.retrievalChunkMaxChars;
 
 export function chunkText(str, size = CHUNK_SIZE, overlap = CHUNK_OVERLAP) {
   const text = String(str || "")
@@ -24,10 +26,6 @@ export function chunkText(str, size = CHUNK_SIZE, overlap = CHUNK_OVERLAP) {
   return chunks;
 }
 
-export function isTextLikeMime(mime) {
-  const m = String(mime || "").toLowerCase();
-  return m.startsWith("text/") || /(json|xml|yaml|yml|csv|markdown|md|html)/i.test(m);
-}
 
 export function isTextLikeFile(file) {
   const type = String(file?.mimetype || "").toLowerCase();
@@ -47,7 +45,7 @@ function isTextLikeFilename(filename) {
 async function fetchTurnAttachmentText(turnId, filename) {
   try {
     if (!isTextLikeFilename(filename)) return '';
-    const base = process.env.POCKETBASE_URL || 'http://127.0.0.1:8090';
+    const base = config.pocketbase.url;
     const url = `${base}/api/files/turns/${turnId}/${encodeURIComponent(filename)}`;
     const res = await fetch(url);
     if (!res.ok) return '';
@@ -59,7 +57,6 @@ async function fetchTurnAttachmentText(turnId, filename) {
 }
 
 export async function ensureIndexedForConversation({ pb, conversationId, embeddings, files = [] }) {
-  if (!conversationId) return;
   let store = vectorStores.get(conversationId);
   if (!store) {
     store = { docs: [], indexedCount: 0, seenTexts: new Set(), indexedTurnIds: new Set() };
@@ -69,7 +66,7 @@ export async function ensureIndexedForConversation({ pb, conversationId, embeddi
   // Load turns
   const turns = await pb.collection("turns").getFullList(500, {
     filter: `conversation = "${conversationId}"`,
-    sort: "index",
+    sort: "created",
   });
   const allTexts = [];
   for (const t of turns) {

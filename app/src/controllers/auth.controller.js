@@ -1,6 +1,7 @@
 import { createPocketBaseClient } from '../config/pocketbase.js';
+import config from '../config/config.js';
 
-const isProd = process.env.NODE_ENV === 'production';
+const isProd = config.nodeEnv === 'production';
 const sameSite = isProd ? 'None' : 'Lax';
 const secure = isProd;
 

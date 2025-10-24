@@ -9,22 +9,22 @@ export async function createConversation(req, title) {
   }
 }
 
-export async function getNextTurnIndex(req, conversationId) {
-  const latest = await req.pb.collection('turns').getList(1, 1, {
-    filter: `conversation="${conversationId}"`,
-    sort: '-index',
-  });
-  return latest.items.length ? latest.items[0].index + 1 : 1;
+export async function getConversationMeta(req, conversationId) {
+  try {
+    const c = await req.pb.collection('conversations').getOne(conversationId);
+    return { id: c.id, title: c.title, created: c.created, updated: c.updated };
+  } catch {
+    return { id: conversationId, title: 'Conversation', created: '', updated: '' };
+  }
 }
 
-export async function createTurn(req, { conversationId, index, prompt, assistantText, files = [], assistantAttachments = [] }) {
+export async function createTurn(req, { conversationId, prompt, assistantText, files = [], assistantAttachments = [] }) {
   const hasUserFiles = Array.isArray(files) && files.length > 0;
   const hasAssistantFiles = Array.isArray(assistantAttachments) && assistantAttachments.length > 0;
 
   if (hasUserFiles || hasAssistantFiles) {
     const form = new FormData();
     form.append('conversation', conversationId);
-    form.append('index', index);
     form.append('user_text', prompt);
     form.append('assistant_text', assistantText);
 
@@ -49,7 +49,6 @@ export async function createTurn(req, { conversationId, index, prompt, assistant
 
   const payload = {
     conversation: conversationId,
-    index,
     user_text: prompt,
     assistant_text: assistantText,
   };
