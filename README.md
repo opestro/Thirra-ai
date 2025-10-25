@@ -15,14 +15,21 @@ A minimal Express API with PocketBase auth and OpenRouter-powered chat streaming
 ## Environment
 Required
 - `PORT` — server port (default `4000`)
-- `APP_BASE_URL` — e.g., `http://localhost:4000`
 - `NODE_ENV` — `development` or `production`
 - `POCKETBASE_URL` — e.g., `http://127.0.0.1:8090`
 - `OPENROUTER_API_KEY` — your OpenRouter key (format `sk-or-v1...`)
 
+Optional
+- `APP_BASE_URL` — override base URL (defaults to `http://localhost:${PORT}`)
+- `OPENROUTER_BASE_URL` — default `https://openrouter.ai/api/v1`
+- `OPENROUTER_MODEL` — default `openai/gpt-4o-mini`
+- `OPENROUTER_EMBED_MODEL` — default `openai/text-embedding-3-large`
+- `OPENROUTER_LIGHTWEIGHT_MODEL` — fallback to `OPENROUTER_MODEL` if unset
+- `RECENT_MESSAGE_COUNT`, `RAG_TOP_K`, `RETRIEVAL_CHUNK_MAX_CHARS`, `PROMPT_CHAR_BUDGET`, `SUMMARY_CAP_CHARS`
+- `CHUNK_SIZE`, `CHUNK_OVERLAP`, `MAX_HISTORY_CHARS`, `COMPRESSED_RECENT_CHARS`, `MAX_CONTEXT_TOKENS`
+
 Notes
-- OpenRouter `baseUrl`, `model`, and prompt/memory tuning values are fixed in `app/src/config/config.js`.
-  Edit that file to adjust: `openrouter.model`, `openrouter.embedModel`, and `prompt` values like `recentMessageCount`, `ragTopK`, `promptCharBudget`, etc.
+- Config reads environment variables with sensible defaults (see `.env.example`). Adjust via `.env` or edit `app/src/config/config.js`.
 
 ## Authentication
 - Cookie session (set on login) or `Authorization: Bearer <token>`
