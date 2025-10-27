@@ -37,6 +37,7 @@ export const config = {
     chunkSize: parseInt(env.CHUNK_SIZE ?? '1000', 10),
     chunkOverlap: parseInt(env.CHUNK_OVERLAP ?? '150', 10),
     maxOutputTokens: parseInt(env.MAX_OUTPUT_TOKENS ?? '2048', 10),
+    maxHistoryTokens: parseInt(env.MAX_HISTORY_TOKENS ?? '2000', 10), // Cost optimization
   },
 };
 

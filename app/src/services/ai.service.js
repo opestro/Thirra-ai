@@ -11,6 +11,7 @@ import { HumanMessage } from "@langchain/core/messages";
 import { buildCombinedMemory } from "../memory/memoryLayers.js";
 import { extractAssignments } from "../utils/extractFacts.js";
 import { upsertFacts, getFactsText } from "../memory/facts.store.js";
+import { getCostOptimizedHistory, logTokenUsage } from "../utils/tokenBudget.js";
 import config from "../config/config.js";
 
 /**
@@ -92,6 +93,13 @@ export async function streamAIResponse({
     instruction: userInstruction,
   });
   
+  // Apply cost optimization to history
+  const maxHistoryTokens = config.prompt.maxHistoryTokens || 2000;
+  const optimizedHistory = getCostOptimizedHistory(historyMsgs, maxHistoryTokens);
+  
+  logTokenUsage('Before optimization', historyMsgs);
+  logTokenUsage('After optimization', optimizedHistory);
+  
   // Extract and store facts from prompt
   try {
     const facts = extractAssignments(String(prompt || ''));
@@ -132,10 +140,10 @@ export async function streamAIResponse({
     new HumanMessage(String(prompt)),
   ];
   
-  // Create chain and stream
+  // Create chain and stream with optimized history
   const chain = template.pipe(llm);
   const stream = await chain.stream({
-    history: historyMsgs,
+    history: optimizedHistory, // Use cost-optimized history
     input_messages: inputMessages,
   });
   
