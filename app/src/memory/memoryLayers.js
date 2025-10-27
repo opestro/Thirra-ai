@@ -3,19 +3,20 @@ import { ChatOpenAI } from "@langchain/openai";
 import { summarizeMessages, RECENT_MESSAGE_COUNT, SUMMARY_CAP_CHARS } from "../utils/summary.js";
 import { getEmbeddingsClient } from "../utils/embeddingsClient.js";
 import { ensureIndexedForConversation, retrieveContextsWithScores } from "../utils/rag.js";
-import { compressChunks } from "../utils/compression.js";
+import { getCachedTurns, getCachedSummary } from "./cache.js";
 import config from "../config/config.js";
 
 /**
  * Short-term memory: last k messages.
  * Token cost: proportional to sum of last k message lengths.
+ * Uses cached turns to avoid redundant DB calls.
  */
-export async function getShortTermMemory({ pb, conversationId, k = RECENT_MESSAGE_COUNT }) {
+export async function getShortTermMemory({ pb, conversationId, k = RECENT_MESSAGE_COUNT, cachedTurns = null }) {
   if (!conversationId) return [];
-  const turns = await pb.collection("turns").getFullList(500, {
-    filter: `conversation = "${conversationId}"`,
-    sort: "created",
-  });
+  
+  // Use cached turns if provided, otherwise fetch
+  const turns = cachedTurns || await getCachedTurns(pb, conversationId);
+  
   const msgs = [];
   for (const t of turns) {
     if (t.user_text) msgs.push(new HumanMessage(String(t.user_text)));
@@ -26,45 +27,59 @@ export async function getShortTermMemory({ pb, conversationId, k = RECENT_MESSAG
 
 /**
  * Long-term summarized memory using a lightweight model.
- * Token cost: one summarization pass per new chunk; summary reused across turns.
+ * Token cost: one summarization pass per new chunk; summary cached and reused.
+ * Uses cached turns and cached summaries to avoid redundant work.
  */
-export async function getLongTermSummary({ pb, conversationId, instruction }) {
+export async function getLongTermSummary({ pb, conversationId, instruction, cachedTurns = null }) {
   if (!conversationId) return null;
-  const { apiKey, baseUrl, lightweightModel } = config.openrouter;
-  const llm = new ChatOpenAI({
-    apiKey,
-    model: lightweightModel,
-    configuration: {
-      baseURL: baseUrl,
-      defaultHeaders: {
-        "HTTP-Referer": config.appBaseUrl,
-        "X-Title": "Thirra AI",
-      },
-    },
-  });
-
-  const turns = await pb.collection("turns").getFullList(500, {
-    filter: `conversation = "${conversationId}"`,
-    sort: "created",
-  });
+  
+  // Use cached turns if provided, otherwise fetch
+  const turns = cachedTurns || await getCachedTurns(pb, conversationId);
+  
   const msgs = [];
   for (const t of turns) {
     if (t.user_text) msgs.push(new HumanMessage(String(t.user_text)));
     if (t.assistant_text) msgs.push(new AIMessage(String(t.assistant_text)));
   }
+  
   if (msgs.length <= RECENT_MESSAGE_COUNT) return null;
-  const older = msgs.slice(0, msgs.length - RECENT_MESSAGE_COUNT);
-  const summary = await summarizeMessages({ model: llm, instruction, messagesToSummarize: older, existingSummary: "" });
-  const trimmed = String(summary || "").replace(/\s+/g, " ").trim().slice(0, SUMMARY_CAP_CHARS);
-  if (!trimmed) return null;
-  return new SystemMessage(`Earlier conversation summary (compact):\n${trimmed}`);
+  
+  // Try to get cached summary
+  const turnCount = turns.length;
+  const cachedSummary = await getCachedSummary(conversationId, turnCount, async () => {
+    // Generate new summary only if not cached
+    const { apiKey, baseUrl, lightweightModel } = config.openrouter;
+    const llm = new ChatOpenAI({
+      apiKey,
+      model: lightweightModel,
+      configuration: {
+        baseURL: baseUrl,
+        defaultHeaders: {
+          "HTTP-Referer": config.appBaseUrl,
+          "X-Title": "Thirra AI",
+        },
+      },
+    });
+    
+    const older = msgs.slice(0, msgs.length - RECENT_MESSAGE_COUNT);
+    const summary = await summarizeMessages({ 
+      model: llm, 
+      instruction, 
+      messagesToSummarize: older, 
+      existingSummary: "" 
+    });
+    const trimmed = String(summary || "").replace(/\s+/g, " ").trim().slice(0, SUMMARY_CAP_CHARS);
+    return trimmed || null;
+  });
+  
+  if (!cachedSummary) return null;
+  return new SystemMessage(`Earlier conversation summary (compact):\n${cachedSummary}`);
 }
 
 /**
- * Semantic recall with threshold and compression.
+ * Semantic recall with threshold (compression removed - Token Budget handles it)
  * - Computes similarity scores and applies threshold > 0.8 * max(sim).
- * - Compresses selected chunks to ~40–60% tokens.
- * Token cost: retrieval embeddings + compression passes per selected chunk.
+ * Token cost: retrieval embeddings only
  */
 export async function getSemanticContext({ pb, conversationId, query, instruction, kDynamic = 2, thresholdFactor = 0.8 }) {
   const embeddings = getEmbeddingsClient();
@@ -72,32 +87,65 @@ export async function getSemanticContext({ pb, conversationId, query, instructio
   const { chunks, maxSim } = await retrieveContextsWithScores({ conversationId, query, embeddings, topK: Math.max(1, kDynamic) });
   const cutoff = maxSim * thresholdFactor;
   const filtered = chunks.filter(c => c.sim >= cutoff);
-  const rawTexts = filtered.map(c => c.text);
-  if (rawTexts.length === 0) return { contextText: "", stats: { maxSim, cutoff, selected: 0 } };
+  
+  if (filtered.length === 0) {
+    return { contextText: "", stats: { maxSim, cutoff, selected: 0 }, items: [] };
+  }
 
-  const { compressed, ratios } = await compressChunks({ chunks: rawTexts, targetLow: 0.4, targetHigh: 0.6, instruction });
-  const items = compressed.map((t, i) => ({ text: t, sim: filtered[i]?.sim ?? 0, ratio: ratios[i] ?? 0 }));
-  const contextText = items.filter(x => x.text).map((x) => `- ${x.text}`).join("\n");
-  return { contextText, stats: { maxSim, cutoff, selected: rawTexts.length, ratios }, items };
+  // No compression - Token Budget handles it more efficiently
+  const items = filtered.map((chunk) => ({ 
+    text: chunk.text, 
+    sim: chunk.sim 
+  }));
+  const contextText = items.map((x) => `- ${x.text}`).join("\n");
+  
+  return { contextText, stats: { maxSim, cutoff, selected: filtered.length }, items };
 }
 
 /**
- * Combined memory builder.
+ * Combined memory builder - Optimized with single DB call
  * Returns { historyMsgs, contextText, metrics } for use in prompting.
  */
 export async function buildCombinedMemory({ pb, conversationId, query, instruction }) {
-  // Short-term
-  const short = await getShortTermMemory({ pb, conversationId, k: RECENT_MESSAGE_COUNT });
-  // Long-term summary
-  const summaryMsg = await getLongTermSummary({ pb, conversationId, instruction });
+  // Fetch turns ONCE and reuse for all layers
+  const turns = await getCachedTurns(pb, conversationId);
+  
+  // Short-term (pass cached turns)
+  const short = await getShortTermMemory({ 
+    pb, 
+    conversationId, 
+    k: RECENT_MESSAGE_COUNT, 
+    cachedTurns: turns 
+  });
+  
+  // Long-term summary (pass cached turns)
+  const summaryMsg = await getLongTermSummary({ 
+    pb, 
+    conversationId, 
+    instruction, 
+    cachedTurns: turns 
+  });
+  
   const historyMsgs = summaryMsg ? [summaryMsg, ...short] : short;
 
   // Semantic recall (dynamic k: base 2; bump to 3 if query looks complex)
   const complexity = estimateQueryComplexity(query);
   const kDynamic = complexity >= 0.6 ? 3 : 2;
-  const { contextText, stats, items } = await getSemanticContext({ pb, conversationId, query, instruction, kDynamic });
+  const { contextText, stats, items } = await getSemanticContext({ 
+    pb, 
+    conversationId, 
+    query, 
+    instruction, 
+    kDynamic 
+  });
 
-  const metrics = { semanticRecall: stats, shortCount: short.length, hasSummary: !!summaryMsg };
+  const metrics = { 
+    semanticRecall: stats, 
+    shortCount: short.length, 
+    hasSummary: !!summaryMsg,
+    turnsCached: turns.length > 0,
+  };
+  
   return { historyMsgs, contextText, metrics, items };
 }
 

@@ -1,3 +1,5 @@
+import { invalidateTurnCache } from '../memory/cache.js';
+
 export async function createConversation(req, title) {
   try {
     return await req.pb.collection('conversations').create({ title, owner: req.user.id });
@@ -53,6 +55,10 @@ export async function createTurn(req, { conversationId, prompt, assistantText, f
 
     const turn = await req.pb.collection('turns').create(form);
     await updateUsageAggregates(req, { conversationId, promptTokens, completionTokens, totalTokens });
+    
+    // Invalidate cache after new turn
+    invalidateTurnCache(conversationId);
+    
     return turn;
   }
 
@@ -67,6 +73,10 @@ export async function createTurn(req, { conversationId, prompt, assistantText, f
 
   const turn = await req.pb.collection('turns').create(payload);
   await updateUsageAggregates(req, { conversationId, promptTokens, completionTokens, totalTokens });
+  
+  // Invalidate cache after new turn
+  invalidateTurnCache(conversationId);
+  
   return turn;
 }
 

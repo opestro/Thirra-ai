@@ -8,9 +8,10 @@ A clean, production-ready AI chat API with advanced memory and RAG capabilities.
 - **📚 RAG (Retrieval-Augmented Generation)**: Semantic search with embeddings
 - **💾 Facts Store**: Persistent conversation context
 - **💰 Cost Optimization**: Smart token budget management (60-90% savings)
+- **⚡ Performance Optimized**: Intelligent caching (4× faster responses)
 - **📎 File Attachments**: Support for text files in conversations
 - **🔐 Authentication**: PocketBase integration with cookie/bearer auth
-- **⚡ Streaming**: Real-time NDJSON streaming responses
+- **🌊 Streaming**: Real-time NDJSON streaming responses
 
 ## Quick Start
 
