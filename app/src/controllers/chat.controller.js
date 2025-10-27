@@ -1,8 +1,7 @@
-import { generateTitleFromPrompt } from '../services/llm.service.js';
+import { streamAIResponse, generateTitle } from '../services/ai.service.js';
 import { createConversation, createTurn, getConversationMeta } from '../services/chat.service.js';
 import { isValidPrompt, formatChatResponse } from '../utils/chat.utils.js';
 import { extractAssistantAttachments } from '../services/attachments.service.js';
-import { streamAssistantTextWithMemory } from '../services/langchain.service.js';
 
 
 // streamChat() - NDJSON chunked streaming
@@ -25,16 +24,17 @@ export async function streamChat(req, res, next) {
     if (conversationId) {
       conversation = await getConversationMeta(req, conversationId);
     } else {
-      // New conversation flow
-      const title = await generateTitleFromPrompt(prompt);
+      // New conversation - generate title
+      const title = await generateTitle(prompt);
       const c = await createConversation(req, title);
       conversation = { id: c.id, title: c.title, created: c.created, updated: c.updated };
     }
 
-    // Send init event so frontend can prepare UI
+    // Send init event
     res.write(JSON.stringify({ type: 'init', conversation }) + '\n');
 
-    const chunkGen = await streamAssistantTextWithMemory({
+    // Stream AI response
+    const chunkGen = await streamAIResponse({
       pb: req.pb,
       conversationId: conversation.id,
       prompt,

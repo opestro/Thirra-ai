@@ -30,18 +30,13 @@ export const config = {
     lightweightModel: env.OPENROUTER_LIGHTWEIGHT_MODEL || env.OPENROUTER_MODEL || 'openai/gpt-4o-mini',
   },
 
-  // Prompt/memory tuning values (env-driven with sensible defaults)
+  // Prompt and memory settings
   prompt: {
     recentMessageCount: parseInt(env.RECENT_MESSAGE_COUNT ?? '5', 10),
     ragTopK: parseInt(env.RAG_TOP_K ?? '4', 10),
     chunkSize: parseInt(env.CHUNK_SIZE ?? '1000', 10),
     chunkOverlap: parseInt(env.CHUNK_OVERLAP ?? '150', 10),
-    retrievalChunkMaxChars: parseInt(env.RETRIEVAL_CHUNK_MAX_CHARS ?? '12000', 10),
-    promptCharBudget: parseInt(env.PROMPT_CHAR_BUDGET ?? '4500', 10),
-    maxHistoryChars: parseInt(env.MAX_HISTORY_CHARS ?? '1600', 10),
-    compressedRecentChars: parseInt(env.COMPRESSED_RECENT_CHARS ?? '240', 10),
-    summaryCapChars: parseInt(env.SUMMARY_CAP_CHARS ?? '600', 10),
-    maxContextTokens: parseInt(env.MAX_CONTEXT_TOKENS ?? '128000', 10),
+    maxOutputTokens: parseInt(env.MAX_OUTPUT_TOKENS ?? '2048', 10),
   },
 };
 
