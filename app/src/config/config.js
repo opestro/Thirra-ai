@@ -21,13 +21,31 @@ export const config = {
 
   openrouter: {
     apiKey: env.OPENROUTER_API_KEY, // required at deploy time
-
-    // Read from env with defaults
     baseUrl: env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
-    model: env.OPENROUTER_MODEL || 'openai/gpt-4o-mini',
+    
+    // Model routing for cost optimization
+    models: {
+      // Classifier model (cheapest, for routing decisions)
+      classifier: env.OPENROUTER_CLASSIFIER_MODEL || 'openai/gpt-5-mini',
+      
+      // Coding tasks - best code quality
+      coding: env.OPENROUTER_CODING_MODEL || 'anthropic/claude-sonnet-4.5',
+      
+      // General queries - cost-effective
+      general: env.OPENROUTER_GENERAL_MODEL || 'deepseek/deepseek-chat-v3.1',
+      
+      // Heavy work (research, resumes, complex analysis)
+      heavy: env.OPENROUTER_HEAVY_MODEL || 'openai/gpt-5',
+      
+      // Lightweight for summaries
+      lightweight: env.OPENROUTER_LIGHTWEIGHT_MODEL || 'openai/gpt-5-nano',
+    },
+    
+    // Embeddings
     embedModel: env.OPENROUTER_EMBED_MODEL || 'openai/text-embedding-3-large',
-    // Allow overriding lightweight model; default to main model
-    lightweightModel: env.OPENROUTER_LIGHTWEIGHT_MODEL || env.OPENROUTER_MODEL || 'openai/gpt-4o-mini',
+    
+    // Default/fallback model
+    defaultModel: env.OPENROUTER_MODEL || 'deepseek/deepseek-chat-v3.1',
   },
 
   // Prompt and memory settings

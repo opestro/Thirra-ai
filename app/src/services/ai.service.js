@@ -12,6 +12,7 @@ import { buildCombinedMemory } from "../memory/memoryLayers.js";
 import { extractAssignments } from "../utils/extractFacts.js";
 import { upsertFacts, getFactsText } from "../memory/facts.store.js";
 import { getCostOptimizedHistory, logTokenUsage } from "../utils/tokenBudget.js";
+import { routeQuery, estimateCostSavings } from "../utils/queryRouter.js";
 import config from "../config/config.js";
 
 /**
@@ -83,7 +84,7 @@ export async function streamAIResponse({
   files = [],
   userInstruction = null,
 }) {
-  const { apiKey, model, baseUrl } = config.openrouter;
+  const { apiKey, baseUrl } = config.openrouter;
   
   // Build memory (short-term + summary + semantic RAG)
   const { historyMsgs, contextText } = await buildCombinedMemory({
@@ -99,6 +100,10 @@ export async function streamAIResponse({
   
   logTokenUsage('Before optimization', historyMsgs);
   logTokenUsage('After optimization', optimizedHistory);
+  
+  // 🔀 INTELLIGENT ROUTING: Select optimal model based on query
+  const { model, category, reasoning } = await routeQuery(prompt, optimizedHistory);
+  console.log(`[Router] Selected ${model} for ${category} task: ${reasoning}`);
   
   // Extract and store facts from prompt
   try {
@@ -176,6 +181,10 @@ export async function streamAIResponse({
     
     if (totalTokens) {
       console.log(`[AI] Tokens - prompt: ${promptTokens}, completion: ${completionTokens}, total: ${totalTokens}`);
+      
+      // Show cost savings from routing
+      const savings = estimateCostSavings(category, totalTokens);
+      console.log(`[Router] Cost Optimization:`, savings);
     }
   }
   
@@ -195,7 +204,10 @@ export async function streamAIResponse({
  * Generate conversation title
  */
 export async function generateTitle(prompt) {
-  const { apiKey, model, baseUrl } = config.openrouter;
+  const { apiKey, baseUrl, models } = config.openrouter;
+  
+  // Use lightweight model for title generation
+  const model = models.lightweight;
   
   const response = await fetch(`${baseUrl}/chat/completions`, {
     method: 'POST',

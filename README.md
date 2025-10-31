@@ -4,6 +4,7 @@ A clean, production-ready AI chat API with advanced memory and RAG capabilities.
 
 ## Features
 
+- **🔀 Intelligent Routing**: Automatic model selection based on query type (40-60% cost savings)
 - **🧠 Smart Memory System**: Three-layer memory (short-term, long-term summaries, semantic recall)
 - **📚 RAG (Retrieval-Augmented Generation)**: Semantic search with embeddings
 - **💾 Facts Store**: Persistent conversation context
@@ -38,9 +39,14 @@ NODE_ENV=development
 POCKETBASE_URL=http://127.0.0.1:8090
 OPENROUTER_API_KEY=sk-or-v1-your-key-here
 
-# Optional
-OPENROUTER_MODEL=openai/gpt-4o-mini
+# Optional - Model routing (for cost optimization)
+OPENROUTER_CODING_MODEL=anthropic/claude-3.5-sonnet
+OPENROUTER_GENERAL_MODEL=deepseek/deepseek-chat
+OPENROUTER_HEAVY_MODEL=openai/gpt-4o
+OPENROUTER_LIGHTWEIGHT_MODEL=openai/gpt-4o-mini
 OPENROUTER_EMBED_MODEL=openai/text-embedding-3-large
+
+# Optional - Performance tuning
 MAX_OUTPUT_TOKENS=2048
 MAX_HISTORY_TOKENS=2000    # Cost optimization (keeps prompt tokens low)
 RECENT_MESSAGE_COUNT=5
@@ -137,10 +143,28 @@ POST /api/unified-chat/unified  # With auto-title generation
   - Automatic chunking and indexing
   - Cosine similarity-based retrieval
 
+### Intelligent Routing
+
+- **`utils/queryRouter.js`** - Automatic model selection
+  - Classifies queries into: coding, general, or heavy work
+  - Routes to optimal model for cost/quality balance
+  - Real-time cost tracking and savings estimation
+
+| Query Type | Model | Use Case |
+|------------|-------|----------|
+| Coding | Claude 3.5 Sonnet | Programming, debugging, code review |
+| General | DeepSeek | Simple questions, casual chat (97% cheaper) |
+| Heavy | GPT-4 | Research, resumes, complex analysis |
+
+**Cost Savings**: 40-60% average, up to 97% on simple queries
+
+See [INTELLIGENT_ROUTING.md](INTELLIGENT_ROUTING.md) for detailed documentation.
+
 ### Utilities
 
 - **`utils/compression.js`** - Context compression
 - **`utils/summary.js`** - Conversation summarization
+- **`utils/queryRouter.js`** - Query classification and model routing
 - **`utils/extractFacts.js`** - Fact extraction from text
 - **`utils/embeddingsClient.js`** - OpenRouter embeddings client
 

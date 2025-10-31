@@ -48,10 +48,10 @@ export async function getLongTermSummary({ pb, conversationId, instruction, cach
   const turnCount = turns.length;
   const cachedSummary = await getCachedSummary(conversationId, turnCount, async () => {
     // Generate new summary only if not cached
-    const { apiKey, baseUrl, lightweightModel } = config.openrouter;
+    const { apiKey, baseUrl, models } = config.openrouter;
     const llm = new ChatOpenAI({
       apiKey,
-      model: lightweightModel,
+      model: models.lightweight,
       configuration: {
         baseURL: baseUrl,
         defaultHeaders: {
