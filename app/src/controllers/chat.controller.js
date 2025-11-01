@@ -45,6 +45,17 @@ export async function streamChat(req, res, next) {
 
     let assistantText = '';
     for await (const chunk of chunkGen) {
+      // Handle reasoning phase markers
+      if (chunk === '___REASONING_START___') {
+        res.write(JSON.stringify({ type: 'reasoning', status: 'start', message: '🧠 Thinking...' }) + '\n');
+        continue;
+      }
+      if (chunk === '___REASONING_END___') {
+        res.write(JSON.stringify({ type: 'reasoning', status: 'complete', message: '✅ Analysis complete' }) + '\n');
+        continue;
+      }
+      
+      // Regular content
       assistantText += chunk;
       res.write(JSON.stringify({ type: 'chunk', text: chunk }) + '\n');
     }

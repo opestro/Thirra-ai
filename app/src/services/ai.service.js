@@ -152,35 +152,92 @@ export async function streamAIResponse({
     input_messages: inputMessages,
   });
   
-  // Track usage
+  // Track usage and reasoning
   let promptTokens;
   let completionTokens;
   let totalTokens;
+  let reasoningTokens;
+  let isReasoning = false;
+  let hasStartedOutput = false;
+  
+  // Detect reasoning models upfront by model name
+  const isKnownReasoningModel = /gpt-5|o1-preview|o1-mini|o3|deepseek.*reason/i.test(model);
   
   async function* textGenerator() {
+    // For known reasoning models, immediately signal reasoning phase
+    if (isKnownReasoningModel) {
+      isReasoning = true;
+      console.log(`[AI] 🧠 Reasoning model detected: ${model} - expecting reasoning phase`);
+      yield '___REASONING_START___';
+    }
+    
     for await (const chunk of stream) {
-      // Extract usage metadata
+      // Extract usage metadata (including reasoning tokens)
       const usage = chunk?.usage_metadata || chunk?.response_metadata?.usage;
       if (usage) {
         promptTokens = usage?.input_tokens ?? usage?.promptTokens ?? promptTokens;
         completionTokens = usage?.output_tokens ?? usage?.completionTokens ?? completionTokens;
         totalTokens = usage?.total_tokens ?? usage?.totalTokens ?? totalTokens;
+        
+        // Track reasoning tokens (for o1/o3/gpt-5 models)
+        const details = usage?.output_token_details || usage?.completion_tokens_details || {};
+        const newReasoningTokens = details?.reasoning_tokens ?? details?.reasoning ?? 0;
+        if (newReasoningTokens > (reasoningTokens || 0)) {
+          reasoningTokens = newReasoningTokens;
+        }
       }
       
-      // Extract text content
+      // Method 1: Check for reasoning contentBlocks (LangChain native)
+      const contentBlocks = chunk?.contentBlocks || chunk?.content_blocks || [];
+      const hasReasoningBlocks = contentBlocks.some(block => block?.type === 'reasoning');
+      
+      // Method 2: Check for reasoning_details in metadata
+      const hasReasoningDetails = chunk?.reasoning_details?.length > 0 || 
+                                  chunk?.response_metadata?.reasoning_details?.length > 0;
+      
+      // Detect reasoning phase from chunk metadata (for unknown reasoning models)
+      if ((hasReasoningBlocks || hasReasoningDetails) && !isReasoning) {
+        isReasoning = true;
+        console.log(`[AI] 🧠 Reasoning phase detected from chunk metadata`);
+        yield '___REASONING_START___';
+      }
+      
+      // Skip empty chunks during reasoning phase
+      if (isReasoning && (hasReasoningBlocks || hasReasoningDetails)) {
+        continue;
+      }
+      
+      // Extract text content (actual output)
       const content = chunk?.content;
       if (typeof content === 'string' && content) {
+        if (isReasoning && !hasStartedOutput) {
+          hasStartedOutput = true;
+          console.log(`[AI] ✅ Reasoning complete (${reasoningTokens || 0} reasoning tokens), starting output`);
+          yield '___REASONING_END___';
+        }
         yield content;
       } else if (Array.isArray(content)) {
         const text = content.map(part => 
           typeof part === 'string' ? part : part?.text || ''
         ).join('');
-        if (text) yield text;
+        if (text) {
+          if (isReasoning && !hasStartedOutput) {
+            hasStartedOutput = true;
+            console.log(`[AI] ✅ Reasoning complete (${reasoningTokens || 0} reasoning tokens), starting output`);
+            yield '___REASONING_END___';
+          }
+          yield text;
+        }
       }
     }
     
     if (totalTokens) {
-      console.log(`[AI] Tokens - prompt: ${promptTokens}, completion: ${completionTokens}, total: ${totalTokens}`);
+      const logParts = [`[AI] Tokens - prompt: ${promptTokens}, completion: ${completionTokens}`];
+      if (reasoningTokens) {
+        logParts.push(`reasoning: ${reasoningTokens}`);
+      }
+      logParts.push(`total: ${totalTokens}`);
+      console.log(logParts.join(', '));
       
       // Show cost savings from routing
       const savings = estimateCostSavings(category, totalTokens);
@@ -190,11 +247,12 @@ export async function streamAIResponse({
   
   const generator = textGenerator();
   
-  // Attach usage getter
+  // Attach usage getter (including reasoning tokens)
   generator.getUsage = () => ({
     promptTokens,
     completionTokens,
     totalTokens,
+    reasoningTokens,
   });
   
   return generator;
