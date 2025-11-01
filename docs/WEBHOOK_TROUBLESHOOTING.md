@@ -10,22 +10,44 @@
 
 ### Root Causes & Solutions
 
-#### 1. **PocketBase API Rules** (Most Common)
+#### 1. **Missing Admin Authentication** (Most Common)
 
-**Problem**: Webhook cannot update `tool_calls` collection due to permission restrictions.
+**Problem**: Webhook cannot update `tool_calls` collection - no authentication.
 
-**Solution**: Update PocketBase API rules for `tool_calls` collection:
-
-Go to PocketBase Admin → Collections → `tool_calls` → API Rules:
-
-**Update Rule:**
+**Symptoms**:
 ```
-@request.auth.id = "" || turn.conversation.user = @request.auth.id
+[Webhook] Looking for tool_call with external_id: abc123
+[Webhook] No tool call record found for taskId: abc123
 ```
 
-This allows:
-- ✅ Unauthenticated updates (for webhooks)
-- ✅ User updates (for their own tool calls)
+**Solution**: Set up admin authentication for webhooks.
+
+**Quick Fix**:
+
+1. **Create admin account in PocketBase**:
+   - Open PocketBase admin UI: `http://localhost:8090/_/`
+   - Settings → Admins → Create new admin
+   - Use email: `webhooks@yourapp.com`
+   - Generate a strong password
+
+2. **Add to `.env`**:
+   ```bash
+   POCKETBASE_ADMIN_EMAIL=webhooks@yourapp.com
+   POCKETBASE_ADMIN_PASSWORD=your_secure_password
+   ```
+
+3. **Restart server**:
+   ```bash
+   npm run dev
+   ```
+
+4. **Verify**:
+   Check logs for:
+   ```
+   [PocketBase] Admin authenticated for webhook operations ✅
+   ```
+
+**See**: `POCKETBASE_ADMIN_SETUP.md` for detailed setup guide.
 
 #### 2. **Webhook URL Not Accessible**
 
@@ -177,9 +199,20 @@ SELECT * FROM tool_calls WHERE external_id = 'YOUR_TASK_ID';
 
 ### Error: "Failed to update tool call record: 403"
 
-**Meaning**: PocketBase API rules blocking the update.
+**Meaning**: PocketBase blocking the update - authentication issue.
 
-**Solution**: Update API rules (see #1 above)
+**Solutions**:
+1. Check admin credentials are configured (see #1 above)
+2. Verify admin authentication succeeded in logs:
+   ```
+   [PocketBase] Admin authenticated for webhook operations
+   ```
+3. Test admin login manually:
+   ```bash
+   curl -X POST http://localhost:8090/api/admins/auth-with-password \
+     -H "Content-Type: application/json" \
+     -d '{"identity":"YOUR_EMAIL","password":"YOUR_PASSWORD"}'
+   ```
 
 ### Error: "Failed to update tool call record: 404"
 

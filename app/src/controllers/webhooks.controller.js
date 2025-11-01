@@ -34,7 +34,7 @@ export async function handleNanobananaWebhook(req, res, next) {
     const { taskId, state, resultJson, failCode, failMsg } = data;
     
     // Create admin PocketBase client for webhook operations
-    const pb = createAdminPbClient();
+    const pb = await createAdminPbClient();
     
     // Success callback
     if (code === 200 && state === 'success') {

@@ -28,7 +28,28 @@ NANOBANANA_API_KEY=your_actual_api_key_here
 NANOBANANA_CALLBACK_URL=https://your-domain.com/api/webhooks/nanobanana
 ```
 
-## Step 3: Update PocketBase Schema
+## Step 3: Set Up PocketBase Admin (Required for Webhooks)
+
+**Why needed**: Webhooks from Nanobanana need admin access to update tool call records.
+
+1. **Open PocketBase Admin UI**: `http://localhost:8090/_/`
+2. **Go to Settings** → **Admins**
+3. **Create New Admin**:
+   - Email: `webhooks@yourapp.com` (or any email)
+   - Password: Generate a strong random password (20+ chars)
+   - Save
+
+4. **Add to `.env`**:
+   ```bash
+   POCKETBASE_ADMIN_EMAIL=webhooks@yourapp.com
+   POCKETBASE_ADMIN_PASSWORD=your_secure_password_here
+   ```
+
+**⚠️ Important**: Use a dedicated admin account (not your personal one) for security.
+
+See [POCKETBASE_ADMIN_SETUP.md](POCKETBASE_ADMIN_SETUP.md) for detailed security best practices.
+
+## Step 4: Update PocketBase Schema
 
 ### Option A: Via Admin UI
 
@@ -54,8 +75,10 @@ NANOBANANA_CALLBACK_URL=https://your-domain.com/api/webhooks/nanobanana
 - **List/Search**: `@request.auth.id != "" && turn.conversation.user = @request.auth.id`
 - **View**: `@request.auth.id != "" && turn.conversation.user = @request.auth.id`
 - **Create**: `@request.auth.id != ""`
-- **Update**: `@request.auth.id = "" || turn.conversation.user = @request.auth.id`
+- **Update**: `turn.conversation.user = @request.auth.id`
 - **Delete**: `@request.auth.id != "" && turn.conversation.user = @request.auth.id`
+
+**Note**: Update rule allows admin (webhook) to update records, but users can only update their own.
 
 **Update `turns` Collection:**
 
@@ -70,7 +93,7 @@ Add these fields:
 
 See [POCKETBASE_SCHEMA_TOOLS.md](POCKETBASE_SCHEMA_TOOLS.md) for SQL commands.
 
-## Step 4: Restart Server
+## Step 5: Restart Server
 
 ```bash
 cd app
@@ -79,10 +102,13 @@ npm run dev
 
 You should see:
 ```
+[PocketBase] Admin authenticated for webhook operations ✅
 [AI] Tools enabled: generate_image
 ```
 
-## Step 5: Test It!
+**If you see**: `[PocketBase] No admin credentials configured` → Go back to Step 3!
+
+## Step 6: Test It!
 
 ### Test 1: Manual API Test
 
@@ -118,7 +144,7 @@ curl "http://localhost:8090/api/collections/tool_calls/records" \
 curl "http://localhost:4000/api/webhooks/nanobanana/status/task_123"
 ```
 
-## Step 6: Setup Webhook (Production)
+## Step 7: Setup Webhook (Production)
 
 For production, your webhook endpoint must be publicly accessible.
 

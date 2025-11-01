@@ -51,8 +51,8 @@ export async function streamUnifiedChat(req, res, next) {
       if (chunk === '___REASONING_END___') {
         res.write(JSON.stringify({ type: 'reasoning', status: 'complete', message: '✅ Analysis complete' }) + '\n');
         continue;
-      }
-      
+    }
+
       // Handle reasoning content (what model is thinking)
       if (chunk.startsWith('___REASONING_CONTENT___')) {
         const reasoningText = chunk.replace('___REASONING_CONTENT___', '').replace('___END_REASONING_CONTENT___', '');
@@ -63,7 +63,7 @@ export async function streamUnifiedChat(req, res, next) {
       // Regular content
       assistantText += chunk;
       res.write(JSON.stringify({ type: 'chunk', text: chunk }) + '\n');
-    }
+      }
 
     const usage = chunkGen.getUsage?.() || {};
     const toolCalls = chunkGen.getToolCalls?.() || [];
@@ -118,8 +118,8 @@ export async function streamUnifiedChat(req, res, next) {
           parsedResult = JSON.parse(resultMsg.content);
         } catch (e) {
           parsedResult = { content: resultMsg.content };
-        }
-        
+    }
+
         // Extract external ID if present (e.g., taskId for image generation)
         const externalId = parsedResult.taskId || null;
         
@@ -141,7 +141,7 @@ export async function streamUnifiedChat(req, res, next) {
           console.log(`[UnifiedChat] Updated turn ${turn.id} with tool call metadata`);
         } catch (error) {
           console.error('[UnifiedChat] Failed to update turn metadata:', error);
-        }
+    }
       }
       
       // Send tool execution results to client

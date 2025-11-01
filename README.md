@@ -50,6 +50,10 @@ OPENROUTER_EMBED_MODEL=openai/text-embedding-3-large
 # Optional - Tool calling (image generation)
 NANOBANANA_API_KEY=your_nanobanana_api_key
 
+# Optional - PocketBase admin (for webhooks)
+POCKETBASE_ADMIN_EMAIL=admin@example.com
+POCKETBASE_ADMIN_PASSWORD=your_secure_admin_password
+
 # Optional - Performance tuning
 MAX_OUTPUT_TOKENS=2048
 MAX_HISTORY_TOKENS=2000    # Cost optimization (keeps prompt tokens low)
@@ -205,7 +209,8 @@ The LLM can automatically use tools when appropriate:
 
 See [TOOL_CALLING.md](docs/TOOL_CALLING.md) for detailed documentation.
 
-**Troubleshooting:**
+**Setup & Troubleshooting:**
+- [POCKETBASE_ADMIN_SETUP.md](docs/POCKETBASE_ADMIN_SETUP.md) - **Required**: Admin setup for webhooks
 - [WEBHOOK_TROUBLESHOOTING.md](docs/WEBHOOK_TROUBLESHOOTING.md) - Webhook not updating tool results
 - [TOOL_CALLING_ISSUES.md](docs/TOOL_CALLING_ISSUES.md) - Empty tool names, streaming issues
 

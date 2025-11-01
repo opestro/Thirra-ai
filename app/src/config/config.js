@@ -17,6 +17,8 @@ export const config = {
 
   pocketbase: {
     url: env.POCKETBASE_URL, // required at deploy time
+    adminEmail: env.POCKETBASE_ADMIN_EMAIL, // optional, for webhooks
+    adminPassword: env.POCKETBASE_ADMIN_PASSWORD, // optional, for webhooks
   },
 
   openrouter: {

@@ -49,18 +49,18 @@ export async function getLongTermSummary({ pb, conversationId, instruction, cach
   const cachedSummary = await getCachedSummary(conversationId, turnCount, async () => {
     // Generate new summary only if not cached
     const { apiKey, baseUrl, models } = config.openrouter;
-    const llm = new ChatOpenAI({
-      apiKey,
+  const llm = new ChatOpenAI({
+    apiKey,
       model: models.lightweight,
-      configuration: {
-        baseURL: baseUrl,
-        defaultHeaders: {
-          "HTTP-Referer": config.appBaseUrl,
-          "X-Title": "Thirra AI",
-        },
+    configuration: {
+      baseURL: baseUrl,
+      defaultHeaders: {
+        "HTTP-Referer": config.appBaseUrl,
+        "X-Title": "Thirra AI",
       },
-    });
-    
+    },
+  });
+
     const older = msgs.slice(0, msgs.length - RECENT_MESSAGE_COUNT);
     const summary = await summarizeMessages({ 
       model: llm, 
@@ -68,7 +68,7 @@ export async function getLongTermSummary({ pb, conversationId, instruction, cach
       messagesToSummarize: older, 
       existingSummary: "" 
     });
-    const trimmed = String(summary || "").replace(/\s+/g, " ").trim().slice(0, SUMMARY_CAP_CHARS);
+  const trimmed = String(summary || "").replace(/\s+/g, " ").trim().slice(0, SUMMARY_CAP_CHARS);
     return trimmed || null;
   });
   
