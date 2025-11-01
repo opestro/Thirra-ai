@@ -20,6 +20,66 @@ export async function getConversationMeta(req, conversationId) {
   }
 }
 
+/**
+ * Get conversation turns with tool calls
+ */
+export async function getConversationTurns(req, conversationId) {
+  try {
+    const turns = await req.pb.collection('turns').getFullList({
+      filter: `conversation="${conversationId}"`,
+      sort: 'created',
+    });
+    
+    // Get tool calls for all turns
+    const turnIds = turns.map(t => t.id);
+    let toolCallsByTurn = {};
+    
+    if (turnIds.length > 0) {
+      const toolCalls = await req.pb.collection('tool_calls').getFullList({
+        filter: turnIds.map(id => `turn="${id}"`).join(' || '),
+        sort: 'created',
+      });
+      
+      // Group by turn
+      toolCalls.forEach(tc => {
+        if (!toolCallsByTurn[tc.turn]) {
+          toolCallsByTurn[tc.turn] = [];
+        }
+        toolCallsByTurn[tc.turn].push({
+          id: tc.id,
+          tool_name: tc.tool_name,
+          tool_call_id: tc.tool_call_id,
+          arguments: JSON.parse(tc.arguments || '{}'),
+          result: tc.result ? JSON.parse(tc.result) : null,
+          status: tc.status,
+          error: tc.error,
+          external_id: tc.external_id,
+          created: tc.created,
+          updated: tc.updated,
+        });
+      });
+    }
+    
+    // Format turns with tool calls
+    return turns.map(turn => ({
+      id: turn.id,
+      user_text: turn.user_text,
+      assistant_text: turn.assistant_text,
+      user_attachments: turn.user_attachments || [],
+      assistant_attachments: turn.assistant_attachments || [],
+      prompt_tokens: turn.prompt_tokens || 0,
+      completion_tokens: turn.completion_tokens || 0,
+      total_tokens: turn.total_tokens || 0,
+      created: turn.created,
+      updated: turn.updated,
+      tool_calls: toolCallsByTurn[turn.id] || [],
+    }));
+  } catch (error) {
+    console.error('[Chat Service] Error fetching turns:', error);
+    throw error;
+  }
+}
+
 export async function createTurn(req, { conversationId, prompt, assistantText, files = [], assistantAttachments = [], usage = {} }) {
   const hasUserFiles = Array.isArray(files) && files.length > 0;
   const hasAssistantFiles = Array.isArray(assistantAttachments) && assistantAttachments.length > 0;

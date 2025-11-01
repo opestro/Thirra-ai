@@ -5,6 +5,7 @@ A clean, production-ready AI chat API with advanced memory and RAG capabilities.
 ## Features
 
 - **🔀 Intelligent Routing**: Automatic model selection based on query type (40-60% cost savings)
+- **🛠️ Tool Calling**: LLM can use external tools (image generation, and more)
 - **🧠 Smart Memory System**: Three-layer memory (short-term, long-term summaries, semantic recall)
 - **📚 RAG (Retrieval-Augmented Generation)**: Semantic search with embeddings
 - **💾 Facts Store**: Persistent conversation context
@@ -45,6 +46,9 @@ OPENROUTER_GENERAL_MODEL=deepseek/deepseek-chat
 OPENROUTER_HEAVY_MODEL=openai/gpt-4o
 OPENROUTER_LIGHTWEIGHT_MODEL=openai/gpt-4o-mini
 OPENROUTER_EMBED_MODEL=openai/text-embedding-3-large
+
+# Optional - Tool calling (image generation)
+NANOBANANA_API_KEY=your_nanobanana_api_key
 
 # Optional - Performance tuning
 MAX_OUTPUT_TOKENS=2048
@@ -116,8 +120,30 @@ POST /api/unified-chat/unified  # With auto-title generation
 {"type":"init","conversation":{"id":"...","title":"..."}}
 {"type":"chunk","text":"Response "}
 {"type":"chunk","text":"continues..."}
+{"type":"tool_calls","count":1,"tools":[{"name":"generate_image","args":{...}}]}
+{"type":"tool_results","results":[{"tool":"generate_image","success":true,"data":{...}}]}
 {"type":"final","data":{...}}
 ```
+
+### Comprehensive API Documentation
+
+For complete API documentation with all event types, schemas, and frontend integration examples:
+
+📚 **[API_STREAMING.md](docs/API_STREAMING.md)** - Full streaming API reference
+- All event types: init, reasoning, chunk, tool_calls, tool_results, final, error
+- Complete schemas and examples
+- Best practices and error handling
+
+💻 **[API_EXAMPLES.md](docs/API_EXAMPLES.md)** - Ready-to-use code examples
+- React + TypeScript (with hooks)
+- Next.js App Router
+- Vue 3 + Pinia
+- Plain HTML + JavaScript
+
+🛠️ **[TOOL_CALLING.md](docs/TOOL_CALLING.md)** - Tool calling system
+- How tools work with LangChain
+- Adding new tools
+- Webhook handling for async operations
 
 ## Architecture
 
@@ -159,6 +185,25 @@ POST /api/unified-chat/unified  # With auto-title generation
 **Cost Savings**: 40-60% average, up to 97% on simple queries
 
 See [INTELLIGENT_ROUTING.md](INTELLIGENT_ROUTING.md) for detailed documentation.
+
+### Tool Calling
+
+- **`tools/imageGeneration.tool.js`** - Image generation with Nanobanana API
+- **`services/toolCalls.service.js`** - Tool call storage and management
+- **`controllers/webhooks.controller.js`** - Webhook handling for async operations
+
+The LLM can automatically use tools when appropriate:
+- **Image Generation**: Creates images from text descriptions
+- **Extensible**: Easy to add new tools
+
+**Example Flow:**
+1. User: "Generate an image of a sunset"
+2. LLM: Calls `generate_image` tool
+3. API: Creates image generation task
+4. Webhook: Notifies when complete
+5. User: Receives generated image URL
+
+See [TOOL_CALLING.md](docs/TOOL_CALLING.md) for detailed documentation.
 
 ### Utilities
 

@@ -7,12 +7,13 @@
 
 import { ChatOpenAI } from "@langchain/openai";
 import { ChatPromptTemplate, MessagesPlaceholder } from "@langchain/core/prompts";
-import { HumanMessage } from "@langchain/core/messages";
+import { HumanMessage, ToolMessage } from "@langchain/core/messages";
 import { buildCombinedMemory } from "../memory/memoryLayers.js";
 import { extractAssignments } from "../utils/extractFacts.js";
 import { upsertFacts, getFactsText } from "../memory/facts.store.js";
 import { getCostOptimizedHistory, logTokenUsage } from "../utils/tokenBudget.js";
 import { routeQuery, estimateCostSavings } from "../utils/queryRouter.js";
+import { generateImage } from "../tools/imageGeneration.tool.js";
 import config from "../config/config.js";
 
 /**
@@ -86,6 +87,9 @@ export async function streamAIResponse({
 }) {
   const { apiKey, baseUrl } = config.openrouter;
   
+  // Store original prompt for tool fallback
+  const originalPrompt = prompt;
+  
   // Build memory (short-term + summary + semantic RAG)
   const { historyMsgs, contextText } = await buildCombinedMemory({
     pb,
@@ -125,7 +129,7 @@ export async function streamAIResponse({
   ]);
   
   // Create model
-  const llm = new ChatOpenAI({
+  let llm = new ChatOpenAI({
     apiKey,
     model,
     temperature: 0.7,
@@ -138,6 +142,17 @@ export async function streamAIResponse({
       },
     },
   });
+  
+  // Bind tools to model (only if nanobanana is configured)
+  const availableTools = [];
+  if (config.nanobanana.apiKey) {
+    availableTools.push(generateImage);
+  }
+  
+  if (availableTools.length > 0) {
+    llm = llm.bindTools(availableTools);
+    console.log(`[AI] Tools enabled: ${availableTools.map(t => t.name).join(', ')}`);
+  }
   
   // Prepare input messages
   const inputMessages = [
@@ -159,6 +174,7 @@ export async function streamAIResponse({
   let reasoningTokens;
   let isReasoning = false;
   let hasStartedOutput = false;
+  let toolCalls = []; // Track tool calls from the stream
   
   // Detect reasoning models upfront by model name
   const isKnownReasoningModel = /gpt-5|o1-preview|o1-mini|o3|deepseek.*reason/i.test(model);
@@ -171,7 +187,11 @@ export async function streamAIResponse({
       yield '___REASONING_START___';
     }
     
+    let currentChunk; // Track the current chunk to extract tool calls at the end
+    
     for await (const chunk of stream) {
+      currentChunk = chunk; // Store chunk for tool call extraction
+      
       // Extract usage metadata (including reasoning tokens)
       const usage = chunk?.usage_metadata || chunk?.response_metadata?.usage;
       if (usage) {
@@ -185,6 +205,12 @@ export async function streamAIResponse({
         if (newReasoningTokens > (reasoningTokens || 0)) {
           reasoningTokens = newReasoningTokens;
         }
+      }
+      
+      // Extract tool calls from chunk (accumulate across chunks)
+      if (chunk?.tool_calls && chunk.tool_calls.length > 0) {
+        toolCalls = chunk.tool_calls;
+        console.log(`[AI] Tool calls detected: ${toolCalls.map(tc => tc.name).join(', ')}`);
       }
       
       // Method 1: Check for reasoning contentBlocks (LangChain native)
@@ -268,7 +294,91 @@ export async function streamAIResponse({
     reasoningTokens,
   });
   
+  // Attach method to get tool calls (if any)
+  generator.getToolCalls = () => toolCalls;
+  
+  // Attach method to get original prompt (for tool fallback)
+  generator.getOriginalPrompt = () => originalPrompt;
+  
   return generator;
+}
+
+/**
+ * Execute tool calls from LLM response
+ */
+export async function executeToolCalls(toolCalls, userPrompt = null) {
+  if (!toolCalls || toolCalls.length === 0) {
+    return [];
+  }
+  
+  const results = [];
+  
+  for (const toolCall of toolCalls) {
+    try {
+      console.log(`[Tools] Executing ${toolCall.name}`);
+      console.log(`[Tools] Arguments received:`, JSON.stringify(toolCall.args, null, 2));
+      
+      let result;
+      
+      // Match tool by name and validate required fields
+      if (toolCall.name === 'generate_image') {
+        // Use user's original prompt as fallback if LLM didn't extract it
+        if (!toolCall.args || !toolCall.args.prompt) {
+          if (userPrompt) {
+            console.log(`[Tools] Using user's original message as prompt: "${userPrompt}"`);
+            toolCall.args = {
+              ...toolCall.args,
+              prompt: userPrompt,
+            };
+            result = await generateImage.invoke(toolCall.args);
+          } else {
+            console.error(`[Tools] Missing required 'prompt' argument and no fallback available`);
+            result = { 
+              success: false,
+              error: 'Missing required field: prompt. Please provide a description of the image to generate.' 
+            };
+          }
+        } else {
+          result = await generateImage.invoke(toolCall.args);
+        }
+      } else {
+        result = { success: false, error: `Unknown tool: ${toolCall.name}` };
+      }
+      
+      // Create ToolMessage for LangChain
+      results.push(
+        new ToolMessage({
+          content: JSON.stringify(result),
+          tool_call_id: toolCall.id,
+          name: toolCall.name,
+        })
+      );
+      
+      if (result.success !== false) {
+        console.log(`[Tools] ${toolCall.name} executed successfully`);
+      } else {
+        console.log(`[Tools] ${toolCall.name} execution failed: ${result.error}`);
+      }
+    } catch (error) {
+      console.error(`[Tools] Error executing ${toolCall.name}:`, error.message);
+      
+      // Extract meaningful error message
+      let errorMsg = error.message;
+      if (error.message.includes('Required') && error.message.includes('prompt')) {
+        errorMsg = 'Missing required field: prompt. Please describe what image you want to generate.';
+      }
+      
+      results.push(
+        new ToolMessage({
+          content: JSON.stringify({ success: false, error: errorMsg }),
+          tool_call_id: toolCall.id,
+          name: toolCall.name,
+        })
+      );
+    }
+  }
+  
+  return results;
 }
 
 /**

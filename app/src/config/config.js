@@ -57,6 +57,12 @@ export const config = {
     maxOutputTokens: parseInt(env.MAX_OUTPUT_TOKENS ?? '2048', 10),
     maxHistoryTokens: parseInt(env.MAX_HISTORY_TOKENS ?? '2000', 10), // Cost optimization
   },
+
+  // Nanobanana (Image Generation)
+  nanobanana: {
+    apiKey: env.NANOBANANA_API_KEY, // optional
+    callbackUrl: env.NANOBANANA_CALLBACK_URL || `${appBaseUrl}/api/webhooks/nanobanana`,
+  },
 };
 
 export function assertRequiredEnv() {

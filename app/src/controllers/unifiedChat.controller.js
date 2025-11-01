@@ -1,7 +1,8 @@
 import { createConversation, createTurn, getConversationMeta } from '../services/chat.service.js';
 import { isValidPrompt, formatChatResponse } from '../utils/chat.utils.js';
 import { extractAssistantAttachments } from '../services/attachments.service.js';
-import { streamAIResponse, generateTitle } from '../services/ai.service.js';
+import { streamAIResponse, generateTitle, executeToolCalls } from '../services/ai.service.js';
+import { createToolCall } from '../services/toolCalls.service.js';
 
 // streamUnifiedChat() - Simplified streaming with title generation
 export async function streamUnifiedChat(req, res, next) {
@@ -65,6 +66,8 @@ export async function streamUnifiedChat(req, res, next) {
     }
 
     const usage = chunkGen.getUsage?.() || {};
+    const toolCalls = chunkGen.getToolCalls?.() || [];
+    const originalPrompt = chunkGen.getOriginalPrompt?.() || prompt;
     const assistantAttachments = extractAssistantAttachments(assistantText);
 
     const turn = await createTurn(req, {
@@ -75,6 +78,54 @@ export async function streamUnifiedChat(req, res, next) {
       assistantAttachments,
       usage,
     });
+
+    // Handle tool calls if any
+    if (toolCalls && toolCalls.length > 0) {
+      console.log(`[UnifiedChat] Processing ${toolCalls.length} tool call(s)`);
+      
+      // Send tool call notification to client
+      res.write(JSON.stringify({ 
+        type: 'tool_calls', 
+        count: toolCalls.length,
+        tools: toolCalls.map(tc => ({ name: tc.name, args: tc.args }))
+      }) + '\n');
+      
+      // Execute tools with original user prompt as fallback
+      const toolResults = await executeToolCalls(toolCalls, originalPrompt);
+      
+      // Store tool call records in PocketBase
+      for (let i = 0; i < toolCalls.length; i++) {
+        const toolCall = toolCalls[i];
+        const resultMsg = toolResults[i];
+        let parsedResult;
+        
+        try {
+          parsedResult = JSON.parse(resultMsg.content);
+        } catch (e) {
+          parsedResult = { content: resultMsg.content };
+        }
+        
+        // Extract external ID if present (e.g., taskId for image generation)
+        const externalId = parsedResult.taskId || null;
+        
+        await createToolCall(req.pb, {
+          turnId: turn.id,
+          toolCall,
+          result: parsedResult,
+          externalId,
+        });
+      }
+      
+      // Send tool execution results to client
+      res.write(JSON.stringify({ 
+        type: 'tool_results',
+        results: toolResults.map((tr, i) => ({
+          tool: toolCalls[i].name,
+          success: !JSON.parse(tr.content).error,
+          data: JSON.parse(tr.content),
+        }))
+      }) + '\n');
+    }
 
     const finalPayload = formatChatResponse(conversation, turn);
     res.write(JSON.stringify({ type: 'final', data: finalPayload }) + '\n');
