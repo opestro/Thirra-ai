@@ -6,6 +6,7 @@
 
 import { queryImageTask } from "../tools/imageGeneration.tool.js";
 import { findToolCallByExternalId, updateToolCallResult } from "../services/toolCalls.service.js";
+import { createAdminPbClient } from "../config/pocketbase.js";
 
 /**
  * Handle Nanobanana image generation callback
@@ -16,20 +17,24 @@ export async function handleNanobananaWebhook(req, res, next) {
   try {
     const payload = req.body;
     
-    console.log(`[Webhook] Nanobanana callback received:`, {
+    console.log(`[Webhook] Nanobanana callback received:`, JSON.stringify({
       code: payload.code,
       taskId: payload.data?.taskId,
       state: payload.data?.state,
-    });
+    }));
     
     // Validate payload
     if (!payload.data || !payload.data.taskId) {
+      console.error('[Webhook] Invalid payload - missing data or taskId');
       res.status(400).json({ error: 'Invalid webhook payload' });
       return;
     }
     
     const { code, data, msg } = payload;
     const { taskId, state, resultJson, failCode, failMsg } = data;
+    
+    // Create admin PocketBase client for webhook operations
+    const pb = createAdminPbClient();
     
     // Success callback
     if (code === 200 && state === 'success') {
@@ -51,10 +56,12 @@ export async function handleNanobananaWebhook(req, res, next) {
       
       // Update tool call record in PocketBase
       try {
-        const toolCall = await findToolCallByExternalId(req.pb, taskId);
+        console.log(`[Webhook] Looking for tool_call with external_id: ${taskId}`);
+        const toolCall = await findToolCallByExternalId(pb, taskId);
         
         if (toolCall) {
-          await updateToolCallResult(req.pb, toolCall.id, {
+          console.log(`[Webhook] Found tool_call record: ${toolCall.id}, updating...`);
+          await updateToolCallResult(pb, toolCall.id, {
             result: {
               resultUrls,
               costTime: data.costTime,
@@ -69,6 +76,7 @@ export async function handleNanobananaWebhook(req, res, next) {
         }
       } catch (error) {
         console.error('[Webhook] Failed to update tool call record:', error);
+        console.error('[Webhook] Error details:', error.response || error.message);
       }
       
       res.status(200).json({ 
@@ -90,10 +98,12 @@ export async function handleNanobananaWebhook(req, res, next) {
       
       // Update tool call record with failure
       try {
-        const toolCall = await findToolCallByExternalId(req.pb, taskId);
+        console.log(`[Webhook] Looking for tool_call with external_id: ${taskId}`);
+        const toolCall = await findToolCallByExternalId(pb, taskId);
         
         if (toolCall) {
-          await updateToolCallResult(req.pb, toolCall.id, {
+          console.log(`[Webhook] Found tool_call record: ${toolCall.id}, updating with failure...`);
+          await updateToolCallResult(pb, toolCall.id, {
             status: 'failed',
             error: `${failCode}: ${failMsg}`,
           });

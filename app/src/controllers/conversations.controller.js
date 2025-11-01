@@ -36,12 +36,26 @@ export async function Conversationdetails(req, res, next) {
         if (!toolCallsByTurn[tc.turn]) {
           toolCallsByTurn[tc.turn] = [];
         }
+        
+        // PocketBase JSON fields are already parsed objects
+        const parseIfNeeded = (value, fallback = null) => {
+          if (!value) return fallback;
+          if (typeof value === 'string') {
+            try {
+              return JSON.parse(value);
+            } catch {
+              return fallback;
+            }
+          }
+          return value; // Already an object
+        };
+        
         toolCallsByTurn[tc.turn].push({
           id: tc.id,
           tool_name: tc.tool_name,
           tool_call_id: tc.tool_call_id,
-          arguments: JSON.parse(tc.arguments || '{}'),
-          result: tc.result ? JSON.parse(tc.result) : null,
+          arguments: parseIfNeeded(tc.arguments, {}),
+          result: parseIfNeeded(tc.result, null),
           status: tc.status,
           error: tc.error,
           external_id: tc.external_id,
