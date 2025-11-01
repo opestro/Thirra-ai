@@ -205,6 +205,10 @@ The LLM can automatically use tools when appropriate:
 
 See [TOOL_CALLING.md](docs/TOOL_CALLING.md) for detailed documentation.
 
+**Troubleshooting:**
+- [WEBHOOK_TROUBLESHOOTING.md](docs/WEBHOOK_TROUBLESHOOTING.md) - Webhook not updating tool results
+- [TOOL_CALLING_ISSUES.md](docs/TOOL_CALLING_ISSUES.md) - Empty tool names, streaming issues
+
 ### Utilities
 
 - **`utils/compression.js`** - Context compression

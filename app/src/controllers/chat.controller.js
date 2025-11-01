@@ -85,20 +85,35 @@ export async function streamChat(req, res, next) {
     // Handle tool calls if any
     if (toolCalls && toolCalls.length > 0) {
       console.log(`[Chat] Processing ${toolCalls.length} tool call(s)`);
+      console.log(`[Chat] Tool calls:`, toolCalls.map(tc => ({ 
+        id: tc.id, 
+        name: tc.name, 
+        hasArgs: !!tc.args 
+      })));
       
-      // Send tool call notification to client
-      res.write(JSON.stringify({ 
-        type: 'tool_calls', 
-        count: toolCalls.length,
-        tools: toolCalls.map(tc => ({ name: tc.name, args: tc.args }))
-      }) + '\n');
+      // Filter out invalid tool calls (missing name or id)
+      const validToolCalls = toolCalls.filter(tc => tc.name && tc.id);
       
-      // Execute tools with original user prompt as fallback
-      const toolResults = await executeToolCalls(toolCalls, originalPrompt);
+      if (validToolCalls.length === 0) {
+        console.error(`[Chat] No valid tool calls found! Original count: ${toolCalls.length}`);
+      }
       
-      // Store tool call records in PocketBase
-      for (let i = 0; i < toolCalls.length; i++) {
-        const toolCall = toolCalls[i];
+      // Send tool call notification to client (only valid ones)
+      if (validToolCalls.length > 0) {
+        res.write(JSON.stringify({ 
+          type: 'tool_calls', 
+          count: validToolCalls.length,
+          tools: validToolCalls.map(tc => ({ name: tc.name, args: tc.args }))
+        }) + '\n');
+      }
+      
+      // Execute tools with original user prompt as fallback (only valid ones)
+      const toolsToExecute = validToolCalls.length > 0 ? validToolCalls : toolCalls;
+      const toolResults = await executeToolCalls(toolsToExecute, originalPrompt);
+      
+      // Store tool call records in PocketBase (only for valid tool calls)
+      for (let i = 0; i < toolsToExecute.length; i++) {
+        const toolCall = toolsToExecute[i];
         const resultMsg = toolResults[i];
         let parsedResult;
         
@@ -119,22 +134,24 @@ export async function streamChat(req, res, next) {
         });
       }
       
-      // Update turn to mark it has tool calls
-      try {
-        await req.pb.collection('turns').update(turn.id, {
-          has_tool_calls: true,
-          tool_count: toolCalls.length,
-        });
-        console.log(`[Chat] Updated turn ${turn.id} with tool call metadata`);
-      } catch (error) {
-        console.error('[Chat] Failed to update turn metadata:', error);
+      // Update turn to mark it has tool calls (only if we have valid ones)
+      if (validToolCalls.length > 0) {
+        try {
+          await req.pb.collection('turns').update(turn.id, {
+            has_tool_calls: true,
+            tool_count: validToolCalls.length,
+          });
+          console.log(`[Chat] Updated turn ${turn.id} with tool call metadata`);
+        } catch (error) {
+          console.error('[Chat] Failed to update turn metadata:', error);
+        }
       }
       
       // Send tool execution results to client
       res.write(JSON.stringify({ 
         type: 'tool_results',
         results: toolResults.map((tr, i) => ({
-          tool: toolCalls[i].name,
+          tool: toolsToExecute[i]?.name || 'unknown',
           success: !JSON.parse(tr.content).error,
           data: JSON.parse(tr.content),
         }))

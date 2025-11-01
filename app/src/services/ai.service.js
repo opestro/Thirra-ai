@@ -209,8 +209,14 @@ export async function streamAIResponse({
       
       // Extract tool calls from chunk (accumulate across chunks)
       if (chunk?.tool_calls && chunk.tool_calls.length > 0) {
-        toolCalls = chunk.tool_calls;
-        console.log(`[AI] Tool calls detected: ${toolCalls.map(tc => tc.name).join(', ')}`);
+        // Only update if we have complete tool calls with names
+        const completeCalls = chunk.tool_calls.filter(tc => tc.name);
+        if (completeCalls.length > 0) {
+          toolCalls = completeCalls;
+          console.log(`[AI] Tool calls detected: ${toolCalls.map(tc => tc.name).join(', ')}`);
+        } else {
+          console.log(`[AI] Tool calls chunk received but incomplete (no names yet)`);
+        }
       }
       
       // Method 1: Check for reasoning contentBlocks (LangChain native)
@@ -315,7 +321,24 @@ export async function executeToolCalls(toolCalls, userPrompt = null) {
   
   for (const toolCall of toolCalls) {
     try {
+      // Validate tool call has required fields
+      if (!toolCall.name) {
+        console.error(`[Tools] Invalid tool call - missing name:`, toolCall);
+        results.push(
+          new ToolMessage({
+            content: JSON.stringify({ 
+              success: false, 
+              error: 'Invalid tool call: missing tool name' 
+            }),
+            tool_call_id: toolCall.id || 'unknown',
+            name: 'unknown',
+          })
+        );
+        continue;
+      }
+      
       console.log(`[Tools] Executing ${toolCall.name}`);
+      console.log(`[Tools] Tool call ID: ${toolCall.id}`);
       console.log(`[Tools] Arguments received:`, JSON.stringify(toolCall.args, null, 2));
       
       let result;
