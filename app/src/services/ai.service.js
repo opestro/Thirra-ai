@@ -204,36 +204,56 @@ export async function streamAIResponse({
  * Generate conversation title
  */
 export async function generateTitle(prompt) {
-  const { apiKey, baseUrl, models } = config.openrouter;
-  
-  // Use lightweight model for title generation
-  const model = models.lightweight;
-  
-  const response = await fetch(`${baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        {
-          role: 'system',
-          content: 'Generate a concise 4-6 word conversation title. Return ONLY the title, no quotes or explanation.',
-        },
-        { role: 'user', content: prompt },
-      ],
-      max_tokens: 20,
-    }),
-  });
-  
-  if (!response.ok) {
-    throw new Error(`Title generation failed: ${response.status}`);
+  try {
+    const { apiKey, baseUrl, models } = config.openrouter;
+    
+    // Use lightweight model for title generation
+    const model = models.lightweight;
+    
+    console.log(`[Title Generation] Using model: ${model}`);
+    
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': config.appBaseUrl,
+        'X-Title': 'Thirra AI',
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          {
+            role: 'system',
+            content: 'Generate a concise 4-6 word conversation title. Return ONLY the title, no quotes or explanation.',
+          },
+          { role: 'user', content: prompt },
+        ],
+        max_tokens: 20,
+      }),
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`[Title Generation] Failed: ${response.status} - ${errorText}`);
+      return 'New Conversation';
+    }
+   
+    const data = await response.json();
+    console.log(`[Title Generation] Response: ${JSON.stringify(data)}`);
+    const title = data?.choices?.[0]?.message?.content || '';
+    
+    if (!title) {
+      console.warn('[Title Generation] Empty response from API');
+      return 'New Conversation';
+    }
+    
+    const cleanTitle = String(title).trim().slice(0, 120);
+    console.log(`[Title Generation] Generated: "${cleanTitle}"`);
+    return cleanTitle;
+  } catch (error) {
+    console.error('[Title Generation] Error:', error.message);
+    return 'New Conversation';
   }
-  
-  const data = await response.json();
-  const title = data?.choices?.[0]?.message?.content || '';
-  return String(title).trim().slice(0, 120) || 'New Conversation';
 }
 

@@ -26,6 +26,7 @@ export async function streamChat(req, res, next) {
     } else {
       // New conversation - generate title
       const title = await generateTitle(prompt);
+      console.log(`[Conversation] Created new conversation with title: ${title}`);
       const c = await createConversation(req, title);
       conversation = { id: c.id, title: c.title, created: c.created, updated: c.updated };
     }

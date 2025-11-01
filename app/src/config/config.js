@@ -38,7 +38,7 @@ export const config = {
       heavy: env.OPENROUTER_HEAVY_MODEL || 'openai/gpt-5',
       
       // Lightweight for summaries
-      lightweight: env.OPENROUTER_LIGHTWEIGHT_MODEL || 'openai/gpt-5-nano',
+      lightweight: env.OPENROUTER_LIGHTWEIGHT_MODEL || 'google/gemini-2.5-flash',
     },
     
     // Embeddings
