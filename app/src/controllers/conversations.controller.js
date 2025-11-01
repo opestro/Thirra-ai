@@ -21,14 +21,47 @@ export async function Conversationdetails(req, res, next) {
       sort: 'created',
     });
 
+    // Get tool calls for all turns
+    const turnIds = turns.map(t => t.id);
+    let toolCallsByTurn = {};
+    
+    if (turnIds.length > 0) {
+      const toolCalls = await req.pb.collection('tool_calls').getFullList({
+        filter: turnIds.map(turnId => `turn="${turnId}"`).join(' || '),
+        sort: 'created',
+      });
+      
+      // Group by turn
+      toolCalls.forEach(tc => {
+        if (!toolCallsByTurn[tc.turn]) {
+          toolCallsByTurn[tc.turn] = [];
+        }
+        toolCallsByTurn[tc.turn].push({
+          id: tc.id,
+          tool_name: tc.tool_name,
+          tool_call_id: tc.tool_call_id,
+          arguments: JSON.parse(tc.arguments || '{}'),
+          result: tc.result ? JSON.parse(tc.result) : null,
+          status: tc.status,
+          error: tc.error,
+          external_id: tc.external_id,
+          created: tc.created,
+          updated: tc.updated,
+        });
+      });
+    }
+
     const normalizedTurns = turns.map((t) => ({
       id: t.id,
       user_text: t.user_text,
       assistant_text: t.assistant_text,
       user_attachments: t.user_attachments || [],
       assistant_attachments: t.assistant_attachments || [],
+      has_tool_calls: t.has_tool_calls || false,
+      tool_count: t.tool_count || 0,
       created: t.created,
       updated: t.updated,
+      tool_calls: toolCallsByTurn[t.id] || [], // Include tool calls
     }));
 
     res.json({

@@ -116,6 +116,17 @@ export async function streamUnifiedChat(req, res, next) {
         });
       }
       
+      // Update turn to mark it has tool calls
+      try {
+        await req.pb.collection('turns').update(turn.id, {
+          has_tool_calls: true,
+          tool_count: toolCalls.length,
+        });
+        console.log(`[UnifiedChat] Updated turn ${turn.id} with tool call metadata`);
+      } catch (error) {
+        console.error('[UnifiedChat] Failed to update turn metadata:', error);
+      }
+      
       // Send tool execution results to client
       res.write(JSON.stringify({ 
         type: 'tool_results',
