@@ -189,7 +189,8 @@ export async function streamAIResponse({
       
       // Method 1: Check for reasoning contentBlocks (LangChain native)
       const contentBlocks = chunk?.contentBlocks || chunk?.content_blocks || [];
-      const hasReasoningBlocks = contentBlocks.some(block => block?.type === 'reasoning');
+      const reasoningBlocks = contentBlocks.filter(block => block?.type === 'reasoning');
+      const hasReasoningBlocks = reasoningBlocks.length > 0;
       
       // Method 2: Check for reasoning_details in metadata
       const hasReasoningDetails = chunk?.reasoning_details?.length > 0 || 
@@ -202,8 +203,20 @@ export async function streamAIResponse({
         yield '___REASONING_START___';
       }
       
+      // Stream reasoning content (what the model is thinking)
+      if (hasReasoningBlocks) {
+        for (const reasoningBlock of reasoningBlocks) {
+          const reasoningText = reasoningBlock?.reasoning || reasoningBlock?.text;
+          if (reasoningText) {
+            // Yield reasoning content with special marker
+            yield `___REASONING_CONTENT___${reasoningText}___END_REASONING_CONTENT___`;
+          }
+        }
+        continue; // Skip regular content processing
+      }
+      
       // Skip empty chunks during reasoning phase
-      if (isReasoning && (hasReasoningBlocks || hasReasoningDetails)) {
+      if (isReasoning && hasReasoningDetails) {
         continue;
       }
       

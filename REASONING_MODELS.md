@@ -126,17 +126,28 @@ for await (const chunk of chunkGen) {
 
 ## Stream Response Format
 
-When using reasoning models, the client receives reasoning status **FIRST** (before any content):
+When using reasoning models, the client receives reasoning status **FIRST**, followed by **reasoning content** (what the model is thinking), then the final answer:
 
 ```json
 {"type":"init","conversation":{...}}
 {"type":"reasoning","status":"start","message":"🧠 Thinking..."}
-... (reasoning phase - no content chunks) ...
+{"type":"reasoning","status":"thinking","content":"The user is asking about market analysis..."}
+{"type":"reasoning","status":"thinking","content":"I need to consider competitive landscape..."}
+{"type":"reasoning","status":"thinking","content":"Key factors to analyze: pricing, features, barriers..."}
 {"type":"reasoning","status":"complete","message":"✅ Analysis complete"}
 {"type":"chunk","text":"Based on my analysis, "}
 {"type":"chunk","text":"the answer is..."}
 {"type":"final","data":{...}}
 ```
+
+### Response Types
+
+| Type | Status | Description | Example |
+|------|--------|-------------|---------|
+| `reasoning` | `start` | Reasoning phase begins | `{type: 'reasoning', status: 'start', message: '🧠 Thinking...'}` |
+| `reasoning` | `thinking` | **What model is thinking** | `{type: 'reasoning', status: 'thinking', content: 'Need to analyze...'}` |
+| `reasoning` | `complete` | Reasoning phase ends | `{type: 'reasoning', status: 'complete', message: '✅ Analysis complete'}` |
+| `chunk` | - | Regular response text | `{type: 'chunk', text: 'Based on'}` |
 
 **Key difference from non-reasoning models:**
 - Reasoning status appears **immediately** after init
@@ -151,11 +162,11 @@ init → chunk chunk chunk chunk reasoning(start) → final
 ```
 Content was streaming during reasoning phase!
 
-**✅ After Fix (Correct Order):**
+**✅ After Fix (Correct Order with Reasoning Content):**
 ```
-init → reasoning(start) → ... (thinking) ... → reasoning(complete) → chunk chunk chunk → final
+init → reasoning(start) → reasoning(thinking: "analyzing...") → reasoning(thinking: "considering...") → reasoning(complete) → chunk chunk chunk → final
 ```
-Reasoning status appears first, then content streams.
+Now you can see what the model is thinking in real-time!
 
 ## Usage Metadata
 
@@ -204,7 +215,7 @@ Reasoning models that work with **proactive detection** (detected immediately by
 
 ## Client Implementation
 
-### Simple Display
+### Simple Display (Without Reasoning Content)
 
 ```javascript
 const response = await fetch('/api/chat/stream', {
@@ -231,6 +242,50 @@ while (true) {
     appendText(chunk.text);
   }
 }
+```
+
+### Advanced Display (With Reasoning Content Visible)
+
+```javascript
+const reasoningContainer = document.getElementById('reasoning');
+const answerContainer = document.getElementById('answer');
+
+while (true) {
+  const { done, value } = await reader.read();
+  if (done) break;
+  
+  const chunk = JSON.parse(decoder.decode(value));
+  
+  if (chunk.type === 'reasoning') {
+    if (chunk.status === 'start') {
+      reasoningContainer.innerHTML = '<div class="thinking-header">🧠 Model is thinking...</div>';
+    } else if (chunk.status === 'thinking') {
+      // Show what the model is thinking!
+      const step = document.createElement('div');
+      step.className = 'reasoning-step';
+      step.textContent = `• ${chunk.content}`;
+      reasoningContainer.appendChild(step);
+    } else if (chunk.status === 'complete') {
+      reasoningContainer.innerHTML += '<div class="thinking-complete">✅ Analysis complete</div>';
+    }
+  } else if (chunk.type === 'chunk') {
+    answerContainer.textContent += chunk.text;
+  }
+}
+```
+
+**UI Example:**
+```
+┌─────────────────────────────────┐
+│ 🧠 Model is thinking...         │
+│ • Analyzing market landscape    │
+│ • Considering competitive gaps  │
+│ • Evaluating entry barriers     │
+│ ✅ Analysis complete            │
+└─────────────────────────────────┘
+
+Based on my analysis, the best 
+approach for your POS solution...
 ```
 
 ### With Progress Indicator
@@ -349,13 +404,44 @@ if (chunk === '___REASONING_START___') {
 4. **Monitor costs** - Reasoning tokens are 2-3× more expensive
 5. **Log reasoning time** - Track how long reasoning takes for performance monitoring
 
+## Important Notes
+
+### Reasoning Content Availability
+
+**⚠️ Provider-Dependent:** Not all reasoning models expose reasoning content:
+
+| Provider | Reasoning Content | Format |
+|----------|-------------------|---------|
+| **Anthropic (Claude)** | ✅ Yes | Plain text in `contentBlocks` |
+| **OpenAI (o1/o3)** | ❌ Encrypted | Encrypted in `reasoning_details` |
+| **OpenAI (GPT-5)** | ⚠️ Limited | May be encrypted or unavailable |
+| **DeepSeek Reasoner** | ✅ Yes | Plain text (if enabled) |
+
+**OpenAI's Approach:**
+- o1/o3 models encrypt reasoning for competitive reasons
+- You'll see `reasoning_details` with encrypted data
+- Can still detect reasoning phase and token count
+- But cannot see actual reasoning content
+
+**Anthropic's Approach:**
+- Claude reasoning models expose plain text reasoning
+- Full visibility into thinking process
+- Better for debugging and understanding
+
+**What This Means:**
+- Your system will work with all reasoning models
+- Reasoning status (`start`/`complete`) always works
+- Reasoning content (`thinking`) only works if provider exposes it
+- System gracefully handles both cases
+
 ## Summary
 
 ✅ **Reasoning detection is now active** - System detects when models are thinking
+✅ **Reasoning content streaming** - See what model is thinking (if provider exposes it)
 ✅ **Multiple detection methods** - Uses LangChain's native support + fallbacks
 ✅ **Client notifications** - Sends reasoning status events to frontend
 ✅ **Cost tracking** - Logs reasoning tokens separately
-✅ **Works with all providers** - OpenAI, DeepSeek, etc. via OpenRouter
+✅ **Works with all providers** - OpenAI, Anthropic, DeepSeek, etc. via OpenRouter
 
-Your app now gracefully handles reasoning models! 🎉
+Your app now gracefully handles reasoning models with full transparency (when available)! 🎉
 

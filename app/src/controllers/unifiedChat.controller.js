@@ -52,6 +52,13 @@ export async function streamUnifiedChat(req, res, next) {
         continue;
       }
       
+      // Handle reasoning content (what model is thinking)
+      if (chunk.startsWith('___REASONING_CONTENT___')) {
+        const reasoningText = chunk.replace('___REASONING_CONTENT___', '').replace('___END_REASONING_CONTENT___', '');
+        res.write(JSON.stringify({ type: 'reasoning', status: 'thinking', content: reasoningText }) + '\n');
+        continue;
+      }
+      
       // Regular content
       assistantText += chunk;
       res.write(JSON.stringify({ type: 'chunk', text: chunk }) + '\n');
